@@ -47,7 +47,7 @@ python smoke_test.py
 
 | 阶段 | 配置 | EM | F1 |
 |------|------|----|----|
-| M1 | 单跳 RAG 基线 | | |
+| M1 | 单跳 RAG 基线（top-3，deepseek-v4-flash，n=200） | 0.5250 | 0.6503 |
 | M2 | +Planning | | |
 | M3 | +Reflection | | |
 | M4 | +Memory | | |
