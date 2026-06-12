@@ -63,6 +63,21 @@ SubQ2 精化：
 | 对 bridge 题 | 与 M1 持平（EM=0.5241） | **+0.036 vs M1（EM=0.5602）** |
 | 对 comparison 题 | 下跌（EM=0.5294） | 仍低于 M1（EM=0.5882 vs 0.7059） |
 
+## 意图分类实验（已回退）
+
+尝试让 planner 判断 comparison/bridge 类型，comparison 题保持单子问题路径。
+
+实验结果（n=200）：
+
+| 版本 | total EM | bridge EM | comparison EM |
+|---|---|---|---|
+| M1 基线 | 0.5550 | 0.5241 | 0.7059 |
+| M2-refine（采用） | **0.5650** | 0.5602 | 0.5882 |
+| +意图分类 | 0.5700 | **0.5904** | 0.4706 |
+| +意图分类+格式修复 | 0.5400 | 0.5361 | 0.5588 |
+
+**结论**：comparison 题的根本问题是 M2 的 planner 架构引入了额外噪声，无论如何修复都无法还原 M1 的 0.7059。已回退至 M2-refine 版本，comparison 的损失作为已知局限记录，留待 M3 统一处理。
+
 ## planner 结构化输出
 
 DeepSeek v4-flash 的 thinking 模式不支持 tool_choice，因此 `with_structured_output` 必须使用 `method="json_mode"` 而非默认的函数调用模式：
