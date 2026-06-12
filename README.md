@@ -47,11 +47,13 @@ python smoke_test.py
 
 | 阶段 | 配置 | EM | F1 |
 |------|------|----|----|
-| M1 | 单跳 RAG 基线（top-3，deepseek-v4-flash，n=200） | 0.5250 | 0.6503 |
+| M1 | 单跳 RAG 基线（top-3，deepseek-v4-flash，n=200） | 0.5550 | 0.6971 |
+| M1 bridge | └─ bridge 子集（n=166） | 0.5241 | 0.6759 |
+| M1 comparison | └─ comparison 子集（n=34） | 0.7059 | 0.8006 |
 | M2 | +Planning | | |
 | M3 | +Reflection | | |
 | M4 | +Memory | | |
 
-## 下一步（M1：单跳 RAG 基线）
+## 下一步（M2：+Planning）
 
-把 HotpotQA 每条的 10 段 context 用 BGE 重排取 top-k，喂给 DeepSeek 直接作答；在 validation 上算 EM/F1，作为后面加 Planning / Reflection / Memory 的对照基线。
+在 M1 基线（EM=0.5550 / F1=0.6971）基础上，加入 plan-and-execute 多跳拆解，重点提升 bridge 子集（当前 EM=0.5241）的表现。

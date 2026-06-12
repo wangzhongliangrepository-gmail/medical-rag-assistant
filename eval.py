@@ -50,14 +50,14 @@ def to_raw_contexts(example) -> list[dict]:
 
 # ---------- 单条评测 ----------
 
-def eval_one(graph, example) -> tuple[float, float]:
+def eval_one(graph, example) -> tuple[float, float, str]:
     result = graph.invoke({
         "question": example["question"],
         "raw_contexts": to_raw_contexts(example),
     })
     pred = result["answer"]
     gold = example["answer"]
-    return exact_match(pred, gold), f1(pred, gold)
+    return exact_match(pred, gold), f1(pred, gold), example["type"]
 
 
 # ---------- 主流程 ----------
@@ -74,20 +74,26 @@ def main():
     graph = get_graph()
 
     em_total, f1_total = 0.0, 0.0
+    buckets: dict[str, dict] = {}
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(eval_one, graph, ex): ex for ex in dataset}
         for fut in tqdm(as_completed(futures), total=len(futures), desc="evaluating"):
-            em, f1_score = fut.result()
+            em, f1_score, qtype = fut.result()
             em_total += em
             f1_total += f1_score
+            b = buckets.setdefault(qtype, {"em": 0.0, "f1": 0.0, "n": 0})
+            b["em"] += em
+            b["f1"] += f1_score
+            b["n"] += 1
 
     count = len(dataset)
-    print(f"\n{'='*40}")
-    print(f"样本数: {count}")
-    print(f"EM:     {em_total / count:.4f}")
-    print(f"F1:     {f1_total / count:.4f}")
-    print(f"{'='*40}")
+    print(f"\n=== Results (n={count}, top-{args.top_k if hasattr(args, 'top_k') else 3}) ===")
+    print(f"{'total':<12} EM={em_total/count:.4f}  F1={f1_total/count:.4f}  (n={count})")
+    for qtype in ("bridge", "comparison"):
+        if qtype in buckets:
+            b = buckets[qtype]
+            print(f"{qtype:<12} EM={b['em']/b['n']:.4f}  F1={b['f1']/b['n']:.4f}  (n={b['n']})")
 
 
 if __name__ == "__main__":
