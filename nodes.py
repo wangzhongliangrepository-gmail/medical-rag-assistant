@@ -53,6 +53,46 @@ def retrieve(state: AgentState) -> dict:
         "sub_questions": remaining,
         "evidence": state["evidence"] + new_evidence,
         "top_contexts": new_evidence,  # M1 兼容
+        "last_sub_question": sub_q,
+    }
+
+
+_REFINE_PROMPT = """\
+上一个子问题：{last_sub_q}
+检索到的证据：
+{evidence}
+
+下一个子问题（待精化）：{next_sub_q}
+
+请：
+1. 从证据中提取上一个子问题的简短答案（一个短语或名字）。
+2. 把这个答案代入下一个子问题，改写成更具体的查询。
+
+输出 JSON：{{"intermediate_answer": "...", "refined_question": "..."}}"""
+
+
+class RefineResult(BaseModel):
+    intermediate_answer: str
+    refined_question: str
+
+
+def refine(state: AgentState, *, llm) -> dict:
+    if not state["sub_questions"]:
+        return {}
+
+    latest_evidence = "\n\n".join(state["evidence"][-RERANK_TOP_K:])
+    structured = llm.with_structured_output(RefineResult, method="json_mode")
+    result = structured.invoke([
+        ("system", '你是一个信息提取器，只输出合法 JSON，格式：{"intermediate_answer": "...", "refined_question": "..."}'),
+        ("human", _REFINE_PROMPT.format(
+            last_sub_q=state["last_sub_question"],
+            evidence=latest_evidence,
+            next_sub_q=state["sub_questions"][0],
+        )),
+    ])
+    return {
+        "intermediate_answers": state.get("intermediate_answers", []) + [result.intermediate_answer],
+        "sub_questions": [result.refined_question] + state["sub_questions"][1:],
     }
 
 

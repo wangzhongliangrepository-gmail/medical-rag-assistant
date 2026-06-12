@@ -4,7 +4,7 @@ from langgraph.graph import END, START, StateGraph
 
 from config import LLM_FLASH, LLM_PRO
 from llm import get_llm
-from nodes import answer, planner, retrieve
+from nodes import answer, planner, refine, retrieve
 from state import AgentState
 
 
@@ -25,10 +25,12 @@ def get_graph(tier: str = "flash"):
     g = StateGraph(AgentState)
     g.add_node("planner",  partial(planner, llm=llm_pro))
     g.add_node("retrieve", retrieve)
+    g.add_node("refine",   partial(refine,  llm=llm_flash))
     g.add_node("answer",   partial(answer,  llm=llm_flash))
 
     g.add_edge(START, "planner")
     g.add_edge("planner", "retrieve")
-    g.add_conditional_edges("retrieve", _should_continue, {"retrieve": "retrieve", "answer": "answer"})
+    g.add_edge("retrieve", "refine")
+    g.add_conditional_edges("refine", _should_continue, {"retrieve": "retrieve", "answer": "answer"})
     g.add_edge("answer", END)
     return g.compile()
