@@ -13,7 +13,7 @@ from langchain_deepseek import ChatDeepSeek
 from config import DEEPSEEK_API_KEY, LLM_MODEL
 
 
-def get_llm(temperature: float = 0.0) -> ChatDeepSeek:
+def get_llm(model: str = LLM_MODEL, temperature: float = 0.0) -> ChatDeepSeek:
     if not DEEPSEEK_API_KEY:
         raise RuntimeError("请在 .env 里设置 DEEPSEEK_API_KEY")
-    return ChatDeepSeek(model=LLM_MODEL, temperature=temperature, max_retries=2)
+    return ChatDeepSeek(model=model, temperature=temperature, max_retries=2)

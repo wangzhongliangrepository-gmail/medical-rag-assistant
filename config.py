@@ -11,10 +11,13 @@ load_dotenv()
 #   deepseek-v4-pro   —— 更强推理/编码/长上下文（planner、reflect 等难节点可选）
 # 注意：deepseek-chat / deepseek-reasoner 这两个旧别名 2026-07-24 停用，新项目别用。
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # 必填
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
+LLM_FLASH = os.getenv("LLM_FLASH", "deepseek-v4-flash")
+LLM_PRO   = os.getenv("LLM_PRO",   "deepseek-v4-pro")
+LLM_MODEL = os.getenv("LLM_MODEL", LLM_FLASH)  # 兼容旧用法
 
 # --- Xinference / BGE（向量化 + 重排，本地，DeepSeek 没有 embedding 接口）---
 XINFERENCE_URL = os.getenv("XINFERENCE_URL", "http://localhost:9997")
 # 这两个是 Xinference 启动模型时返回的 UID（不是模型名），用 `xinference list` 查
 EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-large-zh-v1.5")
 RERANK_MODEL_UID = os.getenv("RERANK_MODEL_UID", "bge-reranker-large")
+RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "3"))
