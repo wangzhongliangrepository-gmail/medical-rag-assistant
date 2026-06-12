@@ -1,0 +1,12 @@
+# 密钥 — 绝不提交
+.env
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# git worktree 临时目录
+/m1-rerun/
+
+# 数据集缓存
+.cache/
