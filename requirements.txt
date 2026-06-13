@@ -1,8 +1,11 @@
 langchain>=1.0
 langchain-deepseek>=1.0
 langchain-community>=1.0
+langchain-text-splitters>=0.3
 langgraph>=1.0
 xinference_client
+qdrant-client>=1.12
 datasets>=3.0
 requests
 python-dotenv
+tqdm

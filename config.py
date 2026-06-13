@@ -22,3 +22,16 @@ EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-large-zh-v1.5")
 RERANK_MODEL_UID = os.getenv("RERANK_MODEL_UID", "bge-reranker-large")
 RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "3"))
 MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "3"))
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # bge-large-zh-v1.5 输出维度
+
+# --- Qdrant 向量库（内部知识库）---
+# 开发期用本地嵌入模式（落盘，无需 Docker）；部署期改连服务器（QDRANT_URL）。
+# 二者只需切换 ingest/检索里的 QdrantClient 构造，集合与数据结构一致。
+QDRANT_PATH = os.getenv("QDRANT_PATH", "./qdrant_db")   # 本地落盘目录
+QDRANT_URL = os.getenv("QDRANT_URL")                    # 设了则连服务器（如 http://localhost:6333）
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "medical_kb")
+
+# --- 文档切块（ingestion）---
+# BGE-large-zh max_tokens=512，中文约 1 字≈1 token，故 chunk 控制在 400 字以内最稳。
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
