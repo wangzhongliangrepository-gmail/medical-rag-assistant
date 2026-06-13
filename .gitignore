@@ -6,7 +6,10 @@ __pycache__/
 *.py[cod]
 
 # git worktree 临时目录
-/m1-rerun/
+/*-rerun/
 
 # 数据集缓存
 .cache/
+
+# 大数据集（GB 级，绝不进 git；本地保留）
+medical_data/
