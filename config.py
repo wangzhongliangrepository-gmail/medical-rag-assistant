@@ -18,8 +18,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", LLM_FLASH)  # 兼容旧用法
 # --- Xinference / BGE（向量化 + 重排，本地，DeepSeek 没有 embedding 接口）---
 XINFERENCE_URL = os.getenv("XINFERENCE_URL", "http://localhost:9997")
 # 这两个是 Xinference 启动模型时返回的 UID（不是模型名），用 `xinference list` 查
-EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-large-zh-v1.5")
-RERANK_MODEL_UID = os.getenv("RERANK_MODEL_UID", "bge-reranker-large")
+EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-m3")
+RERANK_MODEL_UID = os.getenv("RERANK_MODEL_UID", "bge-reranker-v2-m3")
 RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "3"))
 MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "3"))
 EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # bge-large-zh-v1.5 输出维度
@@ -30,6 +30,14 @@ EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # bge-large-zh-v1.5 输出维�
 QDRANT_PATH = os.getenv("QDRANT_PATH", "./qdrant_db")   # 本地落盘目录
 QDRANT_URL = os.getenv("QDRANT_URL")                    # 设了则连服务器（如 http://localhost:6333）
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "medical_kb")
+
+# --- 混合检索（dense 语义 + sparse 词面 BM25）---
+# dense 来自 bge-m3（Xinference）；sparse 来自 FastEmbed 本地 BM25。
+# 两路在 Qdrant 内用 RRF 融合，再过 bge-reranker-v2-m3 重排。
+SPARSE_MODEL = os.getenv("SPARSE_MODEL", "Qdrant/bm25")  # FastEmbed 稀疏模型
+DENSE_VECTOR_NAME = "dense"     # Qdrant 命名向量：稠密
+SPARSE_VECTOR_NAME = "sparse"   # Qdrant 命名向量：稀疏
+RECALL_K = int(os.getenv("RECALL_K", "20"))  # 每路召回条数（融合前）
 
 # --- 文档切块（ingestion）---
 # BGE-large-zh max_tokens=512，中文约 1 字≈1 token，故 chunk 控制在 400 字以内最稳。

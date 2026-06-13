@@ -1,15 +1,16 @@
-"""把医学教材语料灌进 Qdrant 持久向量库（P0：内部知识库 ingestion）。
+"""把医学教材语料灌进 Qdrant 混合检索库（P0/Phase2：dense + sparse）。
 
-流程：读 medical_book_zh.json（JSONL）→ 重切 ~400 字 → BGE 嵌入 → 入 Qdrant。
+流程：读 medical_book_zh.json（JSONL）→ 重切 → 同时算 dense(bge-m3) 与 sparse(BM25)
+     → 写入 Qdrant 命名向量集合（dense + sparse）。
 
-为什么要重切：medical_book 原始段落按 2048 字切，远超 BGE-large-zh 的 512 token
-上限，直接嵌入会被截断、丢信息。这里用 RecursiveCharacterTextSplitter 按中文标点
-优先切到 CHUNK_SIZE 以内，相邻块留 CHUNK_OVERLAP 重叠防止切断语义。
+每个 chunk 存两个向量：
+- dense ：bge-m3 语义向量（1024 维，COSINE）
+- sparse：BM25 词面稀疏向量（IDF 由 Qdrant 在库侧施加）
+检索时两路并行召回 → RRF 融合 → 重排（见 kb_search.py）。
 
 用法：
-  python ingest.py --limit 200    # 先小批验证（200 条教材段）
-  python ingest.py                # 全量 8475 条
-  python ingest.py --recreate     # 清空集合重建
+  python ingest.py --limit 200 --recreate   # 小批验证
+  python ingest.py --recreate               # 全量 8475 条
 """
 import argparse
 import json
@@ -17,24 +18,24 @@ import uuid
 from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client import QdrantClient, models
 from tqdm import tqdm
 
+import sparse
 from config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
+    DENSE_VECTOR_NAME,
     EMBED_DIM,
     QDRANT_COLLECTION,
-    QDRANT_PATH,
-    QDRANT_URL,
+    SPARSE_VECTOR_NAME,
 )
 from embeddings import get_embeddings
+from vectordb import get_client
 
 SOURCE = Path(__file__).parent / "medical_data" / "pretrain" / "medical_book_zh.json"
-EMBED_BATCH = 64  # 每批嵌入的 chunk 数，避免单次请求过大
+EMBED_BATCH = 64
 
-# 中文优先按段落/句子切，最后才退化到字符
 _SPLITTER = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
@@ -42,15 +43,7 @@ _SPLITTER = RecursiveCharacterTextSplitter(
 )
 
 
-def get_client() -> QdrantClient:
-    """开发期连本地落盘 Qdrant；设了 QDRANT_URL 则连服务器（部署期）。"""
-    if QDRANT_URL:
-        return QdrantClient(url=QDRANT_URL)
-    return QdrantClient(path=QDRANT_PATH)
-
-
 def load_and_chunk(limit: int | None = None) -> list[dict]:
-    """读教材 JSONL → 重切 → 返回 [{text, source_id, chunk_id}, ...]。"""
     chunks: list[dict] = []
     with open(SOURCE, encoding="utf-8") as f:
         for source_id, line in enumerate(f):
@@ -73,13 +66,23 @@ def ensure_collection(client: QdrantClient, recreate: bool) -> None:
     if not exists:
         client.create_collection(
             collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+            vectors_config={
+                DENSE_VECTOR_NAME: models.VectorParams(
+                    size=EMBED_DIM, distance=models.Distance.COSINE
+                )
+            },
+            sparse_vectors_config={
+                # IDF modifier：BM25 的 IDF 部分由 Qdrant 在库侧按全集统计施加
+                SPARSE_VECTOR_NAME: models.SparseVectorParams(
+                    modifier=models.Modifier.IDF
+                )
+            },
         )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--limit", type=int, default=None, help="只处理前 N 条教材段（验证用）")
+    parser.add_argument("--limit", type=int, default=None, help="只处理前 N 条教材段")
     parser.add_argument("--recreate", action="store_true", help="清空集合重建")
     args = parser.parse_args()
 
@@ -87,20 +90,25 @@ def main() -> None:
     chunks = load_and_chunk(args.limit)
     print(f"      源段落 {'(前%d条)' % args.limit if args.limit else '(全量)'} → {len(chunks)} 个 chunk")
 
-    print("[2/4] 连接 Qdrant 并准备集合...")
+    print("[2/4] 连接 Qdrant 并准备集合（dense + sparse）...")
     client = get_client()
     ensure_collection(client, args.recreate)
 
-    print("[3/4] BGE 嵌入并写入...")
+    print("[3/4] 计算 dense(bge-m3) + sparse(BM25) 并写入...")
     embedder = get_embeddings()
     written = 0
     for i in tqdm(range(0, len(chunks), EMBED_BATCH), desc="ingesting"):
         batch = chunks[i : i + EMBED_BATCH]
-        vectors = embedder.embed_documents([c["text"] for c in batch])
+        texts = [c["text"] for c in batch]
+        dense_vecs = embedder.embed_documents(texts)
+        sparse_vecs = sparse.embed_docs(texts)
         points = [
-            PointStruct(
+            models.PointStruct(
                 id=str(uuid.uuid4()),
-                vector=vec,
+                vector={
+                    DENSE_VECTOR_NAME: dvec,
+                    SPARSE_VECTOR_NAME: models.SparseVector(indices=sidx, values=sval),
+                },
                 payload={
                     "text": c["text"],
                     "source_id": c["source_id"],
@@ -108,7 +116,7 @@ def main() -> None:
                     "source": "medical_book_zh",
                 },
             )
-            for c, vec in zip(batch, vectors)
+            for c, dvec, (sidx, sval) in zip(batch, dense_vecs, sparse_vecs)
         ]
         client.upsert(collection_name=QDRANT_COLLECTION, points=points)
         written += len(points)
