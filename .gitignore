@@ -16,3 +16,7 @@ medical_data/
 
 # Qdrant 本地落盘向量库（可由 ingest.py 重建）
 qdrant_db/
+
+# 运行日志 / 临时输出
+*.log
+cmp_out.txt
