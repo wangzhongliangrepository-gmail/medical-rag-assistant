@@ -24,11 +24,11 @@
 |------|--------|-----------|
 | **Planning** | 把复杂问题拆成子步骤 | ✅ `med_nodes.py` 的 `plan` 节点把复合问诊拆成 1-3 个方面（机理/用药/副作用…）分别检索 |
 | **Tool Use** | 调外部工具获取自身没有的信息 | ✅ 混合检索(Qdrant dense+sparse+RRF+rerank) + Tavily 联网搜索，两路证据 `fuse` 融合 |
+| **Memory** | 跨轮/跨会话保留上下文与经验 | ✅ 短期 `InMemorySaver`（会话内多轮，`contextualize` 指代消解）+ 长期 `InMemoryStore`（BGE 语义检索，按 user_id 记过敏史/慢病，`recall_memory` 召回 + `extract_memory` 自动抽取，作答做安全提示） |
 | **Reflection** | 自我批判、判断证据够不够、不够重来 | 🚧 路线图 P4（Reflexion 回路：答完自判证据充分性，不足换源补检索，带修订上限） |
-| **Memory** | 跨轮/跨会话保留上下文与经验 | 🚧 路线图 P5（短期 checkpointer 多轮对话 + 长期 Store 记用户过敏史/慢病 + 事实缓存） |
 
-> 当前医疗助手已落地 **Planning + Tool Use + 知识融合**；Reflection / Memory 是规划中的
-> 下两个支柱（见 README 路线图）。
+> 当前医疗助手已落地 **Planning + Tool Use + 知识融合 + Memory**；Reflection 是规划中的
+> 下一个支柱（见 README 路线图）。
 
 ## 1.3 主流 Agent 范式
 
@@ -42,11 +42,11 @@
 | 概念 | 是什么 | 本项目对应 |
 |------|--------|-----------|
 | State | 节点间流动的共享数据 | `MedState` TypedDict |
-| Node | 读 state 改 state 的函数 | plan / retrieve_internal / retrieve_external / fuse / answer |
+| Node | 读 state 改 state 的函数 | contextualize / recall_memory / plan / retrieve_* / fuse / answer / extract_memory |
 | Edge | 节点连接 | `add_edge("plan","retrieve_internal")` |
 | Conditional Edge | 按 state 决定走向 | 路线图：reflect 判断够→结束/不够→补检索 |
-| Checkpointer | 持久化 state(短期记忆) | 路线图 P5：会话内多轮上下文 |
-| Store | 跨线程长期记忆 | 路线图 P5：用户记忆 + 事实缓存（BGE 语义检索） |
+| Checkpointer | 持久化 state(短期记忆) | ✅ `InMemorySaver`，按 thread_id 撑会话内多轮（history reducer 累积） |
+| Store | 跨线程长期记忆 | ✅ `InMemoryStore`（BGE 语义检索），按 user_id 记用户健康事实 |
 
 > 为什么用 LangGraph 不用 if/else 串函数？→ 把 Agent 建模成图，条件边天然支持
 > 「反思回路」这种循环，自带状态管理、可视化、LangSmith 追踪，为后续加 Reflection/Memory 留扩展点。
@@ -67,9 +67,14 @@
 7. 怎么拆解复杂问题？→ plan 节点把复合问诊拆成 1-3 个方面；单一问题就只输出原问题。
 8. 拆解一定更好吗？→ 不一定！平行拆解适合「多方面」问题；桥接型（后一跳依赖前一跳答案）需链式精化，否则悬空子问题检索全是噪声（见 `P2_5_DESIGN.md`）。
 
-**反思 / 记忆（路线图）**
-9. Reflection 打算怎么实现？→ answer 后加 reflect 节点自判证据充分性，不足则换源补检索，条件边回检索，带修订上限防死循环。
-10. Memory 打算怎么做？→ 短期：checkpointer + thread_id 撑会话内多轮（指代消解「它的禁忌呢」）；长期：Store 记用户过敏史/慢病，作答时语义召回注入做个性化 + 安全提示。
+**记忆（已实现 P5）**
+9. 短期 vs 长期记忆怎么分？→ 短期=会话内多轮，`InMemorySaver` checkpointer 按 thread_id 持久化 state（含 history）；长期=跨会话，`InMemoryStore` 按 user_id namespace 存用户健康事实。
+10. 多轮指代消解怎么做？→ `contextualize` 节点用最近 N 轮 history 把「那它的禁忌呢」改写成自包含的「二甲双胍的禁忌」，下游检索全用改写后的问题。
+11. 长期记忆怎么写、怎么读？→ 写：`extract_memory` 用结构化输出自动抽取用户明确陈述的过敏/慢病/用药，`store.put`；读：`recall_memory` 用 `store.search(query=)` BGE 语义召回，注入作答 prompt 做安全提示。
+12. 记忆怎么不误抽 / 不串用户？→ 抽取 prompt 严格限「只记明确陈述、没有返回空」；user_id 做 namespace 隔离；抽取失败 try/except 不影响作答。
+
+**反思（路线图 P4）**
+13. Reflection 打算怎么实现？→ answer 后加 reflect 节点自判证据充分性，不足则换源补检索，条件边回检索，带修订上限防死循环。
 
 **评估**
 11. 医疗答案怎么评估？→ 开放长文本 EM 失效，用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量（见 `P1_DESIGN.md`）。
@@ -282,8 +287,9 @@ docker compose up -d --build app             # 3. 构建并起 app
 **Agent 能力**：
 > 我用 LangGraph 在医疗助手上落地了 Agent 支柱：Planning 用 plan-and-execute 把复合
 > 问诊平行拆成多方面，Tool Use 是 Qdrant 混合检索 + Tavily 联网两路工具、再 fuse 融合，
-> 作答严格防幻觉、带引用可溯源。状态图 + 条件边的编排为后续 Reflection（证据自检补
-> 检索）和 Memory（多轮 checkpointer + 长期用户记忆 Store）留好了扩展点。
+> Memory 用 checkpointer 撑会话内多轮指代消解、用带 BGE 语义检索的 Store 跨会话记住用户
+> 过敏史/慢病并在作答时做安全提示。作答严格防幻觉、带引用可溯源；Reflection（证据自检
+> 补检索）是规划中的下一支柱。
 
 **医疗 RAG 项目**：
 > 内外部知识融合的医疗 RAG：内部 Qdrant 做 dense+sparse 混合检索加 BGE 重排，外部

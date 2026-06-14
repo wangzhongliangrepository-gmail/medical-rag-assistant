@@ -12,100 +12,118 @@
       background: #f5f7fa; color: #1a2b3c;
     }
     h1 { font-size: 22px; margin: 0 0 4px; }
-    .sub { color: #6b7a8d; font-size: 13px; margin-bottom: 20px; }
-    .input-row { display: flex; gap: 8px; align-items: stretch; }
-    #q {
-      flex: 1; padding: 12px 14px; font-size: 15px;
-      border: 1px solid #cfd8e3; border-radius: 8px; outline: none;
+    .sub { color: #6b7a8d; font-size: 13px; margin-bottom: 16px; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .newchat {
+      font-size: 13px; padding: 6px 12px; background: #fff; color: #2b7de9;
+      border: 1px solid #cfd8e3; border-radius: 8px; cursor: pointer;
     }
-    #q:focus { border-color: #2b7de9; }
-    button {
-      padding: 0 20px; font-size: 15px; background: #2b7de9; color: #fff;
-      border: none; border-radius: 8px; cursor: pointer;
+    .newchat:hover { background: #eef4fe; }
+    #chat { min-height: 200px; margin-bottom: 16px; }
+    .turn { margin-bottom: 16px; }
+    .bubble-user {
+      background: #2b7de9; color: #fff; padding: 10px 14px; border-radius: 12px 12px 2px 12px;
+      display: inline-block; max-width: 85%; float: right; clear: both; font-size: 15px;
     }
-    button:disabled { background: #9bb8e0; cursor: not-allowed; }
-    .toggle-row { margin: 12px 0 4px; font-size: 14px; color: #34465c; display: flex; align-items: center; gap: 8px; }
-    .toggle-row input { width: 16px; height: 16px; }
-    .hint { color: #8a97a8; font-size: 12px; }
-    #out { margin-top: 22px; }
-    .mode { font-size: 12px; color: #6b7a8d; margin-bottom: 8px; }
-    .card { background: #fff; border: 1px solid #e3e9f0; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
-    .plan { font-size: 13px; color: #46586d; }
-    .plan li { margin: 2px 0; }
+    .bubble-bot {
+      background: #fff; border: 1px solid #e3e9f0; padding: 12px 16px; border-radius: 12px 12px 12px 2px;
+      max-width: 95%; float: left; clear: both;
+    }
+    .turn::after { content: ""; display: table; clear: both; }
     .answer { white-space: pre-wrap; line-height: 1.7; font-size: 15px; }
     .answer strong { color: #11233a; }
-    .src-title { font-size: 13px; font-weight: 600; color: #46586d; margin: 6px 0 8px; }
+    .understood { font-size: 12px; color: #8a97a8; margin-bottom: 6px; }
+    .mode { font-size: 12px; color: #6b7a8d; margin: 8px 0 4px; }
+    .src-toggle { font-size: 12px; color: #2b7de9; cursor: pointer; margin-top: 8px; user-select: none; }
+    .src-list { margin-top: 8px; }
     .src { font-size: 13px; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; background: #f7f9fc; }
     .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-right: 6px; color: #fff; }
     .tag-in { background: #2b7de9; }
     .tag-ex { background: #1aa86a; }
     .src-text { color: #5a6b7e; margin-top: 4px; }
-    .disclaimer { color: #b06b00; font-size: 12px; margin-top: 18px; }
+    .input-row { display: flex; gap: 8px; align-items: stretch; position: sticky; bottom: 0; background: #f5f7fa; padding: 8px 0; }
+    #q { flex: 1; padding: 12px 14px; font-size: 15px; border: 1px solid #cfd8e3; border-radius: 8px; outline: none; }
+    #q:focus { border-color: #2b7de9; }
+    button#ask { padding: 0 20px; font-size: 15px; background: #2b7de9; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+    button#ask:disabled { background: #9bb8e0; cursor: not-allowed; }
+    .toggle-row { margin: 6px 0; font-size: 13px; color: #34465c; display: flex; align-items: center; gap: 8px; }
+    .toggle-row input { width: 16px; height: 16px; }
     .loading { color: #6b7a8d; }
+    .disclaimer { color: #b06b00; font-size: 12px; margin-top: 12px; }
   </style>
 </head>
 <body>
   <h1>🩺 医疗知识助手</h1>
-  <div class="sub">混合检索（语义+词面）+ 知识融合（内部教材 + 联网 Web）的医疗 RAG</div>
+  <div class="sub">混合检索（语义+词面）+ 知识融合（内部教材 + 联网 Web）+ 记忆（多轮 + 用户健康背景）</div>
 
-  <div class="input-row">
-    <input id="q" placeholder="输入医疗问题，例如：二甲双胍的副作用和禁忌" />
-    <button id="ask" onclick="ask()">提问</button>
+  <div class="topbar">
+    <span class="mode" id="uid-label"></span>
+    <button class="newchat" onclick="newChat()">🆕 新会话</button>
   </div>
+
+  <div id="chat"></div>
+
   <label class="toggle-row">
     <input type="checkbox" id="web" />
-    🌐 联网搜索（融合外部 Web，查最新进展时用；关闭则仅查内部教材，更快）
+    🌐 联网搜索（融合外部 Web；关闭则仅查内部教材，更快）
   </label>
-
-  <div id="out"></div>
+  <div class="input-row">
+    <input id="q" placeholder="输入医疗问题，例如：二甲双胍的副作用和禁忌" />
+    <button id="ask" onclick="ask()">发送</button>
+  </div>
+  <div class="disclaimer">⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。</div>
 
   <script>
     const $ = (id) => document.getElementById(id);
 
-    function esc(s) {
-      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-    // 极简 markdown：**粗体** + 换行
-    function md(s) {
-      return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // user_id 长期不变（跨会话长期记忆）；session_id 每个会话一个（短期记忆 thread）
+    function uuid() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()); }
+    let USER_ID = localStorage.getItem("med_user_id");
+    if (!USER_ID) { USER_ID = uuid(); localStorage.setItem("med_user_id", USER_ID); }
+    let SESSION_ID = localStorage.getItem("med_session_id");
+    if (!SESSION_ID) { SESSION_ID = uuid(); localStorage.setItem("med_session_id", SESSION_ID); }
+    $("uid-label").textContent = "用户 " + USER_ID.slice(0, 8) + " ｜ 会话 " + SESSION_ID.slice(0, 8);
+
+    function newChat() {
+      SESSION_ID = uuid();
+      localStorage.setItem("med_session_id", SESSION_ID);
+      $("chat").innerHTML = "";
+      $("uid-label").textContent = "用户 " + USER_ID.slice(0, 8) + " ｜ 会话 " + SESSION_ID.slice(0, 8);
+      $("q").focus();
     }
 
-    async function ask() {
-      const q = $("q").value.trim();
-      if (!q) return;
-      const useWeb = $("web").checked;
-      $("ask").disabled = true;
-      $("out").innerHTML = '<div class="loading">检索中…' + (useWeb ? '（含联网，稍慢）' : '') + '</div>';
-      try {
-        const resp = await fetch("/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: q, use_external: useWeb }),
-        });
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const d = await resp.json();
-        render(q, d, useWeb);
-      } catch (e) {
-        $("out").innerHTML = '<div class="card" style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
-      } finally {
-        $("ask").disabled = false;
+    function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+    function md(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
+
+    function addUserBubble(text) {
+      const div = document.createElement("div");
+      div.className = "turn";
+      div.innerHTML = '<div class="bubble-user">' + esc(text) + '</div>';
+      $("chat").appendChild(div);
+      div.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+
+    function addBotBubble(html) {
+      const div = document.createElement("div");
+      div.className = "turn";
+      div.innerHTML = '<div class="bubble-bot">' + html + '</div>';
+      $("chat").appendChild(div);
+      div.scrollIntoView({ behavior: "smooth", block: "end" });
+      return div;
+    }
+
+    function renderAnswer(q, d, useWeb) {
+      let html = "";
+      if (d.standalone_question && d.standalone_question !== q) {
+        html += '<div class="understood">理解为：' + esc(d.standalone_question) + '</div>';
       }
-    }
-
-    function render(q, d, useWeb) {
-      let html = '';
+      html += '<div class="answer">' + md(d.answer) + '</div>';
       html += '<div class="mode">模式：' + (useWeb ? '内部教材 + 联网 Web' : '仅内部教材')
             + ' ｜ 内部 ' + d.n_internal + ' 段，外部 ' + d.n_external + ' 条 → 重排取 ' + d.evidence.length + '</div>';
-
-      if (d.sub_questions && d.sub_questions.length) {
-        html += '<div class="card plan"><b>规划子问题</b><ul>'
-              + d.sub_questions.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul></div>';
-      }
-
-      html += '<div class="card"><div class="answer">' + md(d.answer) + '</div></div>';
-
       if (d.evidence && d.evidence.length) {
-        html += '<div class="card"><div class="src-title">来源</div>';
+        const sid = "src-" + Date.now();
+        html += '<div class="src-toggle" onclick="document.getElementById(\'' + sid + '\').style.display=(document.getElementById(\'' + sid + '\').style.display===\'none\'?\'block\':\'none\')">▾ 查看来源（' + d.evidence.length + '）</div>';
+        html += '<div class="src-list" id="' + sid + '" style="display:none">';
         d.evidence.forEach((e, i) => {
           const isExt = e.source.startsWith("外部");
           const tag = isExt ? '<span class="tag tag-ex">外部</span>' : '<span class="tag tag-in">内部</span>';
@@ -115,9 +133,33 @@
         });
         html += '</div>';
       }
+      return html;
+    }
 
-      html += '<div class="disclaimer">⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。</div>';
-      $("out").innerHTML = html;
+    async function ask() {
+      const q = $("q").value.trim();
+      if (!q) return;
+      const useWeb = $("web").checked;
+      $("ask").disabled = true;
+      $("q").value = "";
+      addUserBubble(q);
+      const loading = addBotBubble('<div class="loading">检索中…' + (useWeb ? '（含联网，稍慢）' : '') + '</div>');
+      try {
+        const resp = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: q, use_external: useWeb, session_id: SESSION_ID, user_id: USER_ID }),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const d = await resp.json();
+        loading.querySelector(".bubble-bot").innerHTML = renderAnswer(q, d, useWeb);
+        loading.scrollIntoView({ behavior: "smooth", block: "end" });
+      } catch (e) {
+        loading.querySelector(".bubble-bot").innerHTML = '<div style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
+      } finally {
+        $("ask").disabled = false;
+        $("q").focus();
+      }
     }
 
     $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });

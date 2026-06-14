@@ -1,15 +1,66 @@
-"""医疗 RAG 节点（P3：知识融合）。
+"""医疗 RAG 节点（P3 知识融合 + P5 记忆）。
 
-plan → retrieve_internal(Qdrant 教材) + retrieve_external(Tavily Web)
-     → fuse(合并去重重排) → answer(带来源引用)
+短期记忆：contextualize 用会话历史把当前问题改写成自包含问题（指代消解）。
+长期记忆：recall_memory 召回用户健康事实注入作答；extract_memory 自动抽取写回。
+
+contextualize → recall_memory → plan → retrieve_internal + retrieve_external
+             → fuse → answer → extract_memory
 """
+import uuid
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.store.base import BaseStore
 from pydantic import BaseModel
 
-from config import FUSE_TOP_K, RERANK_TOP_K
+from config import FUSE_TOP_K, HISTORY_WINDOW, MEMORY_NAMESPACE, MEMORY_RECALL_K, RERANK_TOP_K
 from embeddings import rerank
 from external import web_search
 from kb_search import search
 from med_state import MedState
+
+
+def _user_ns(config: RunnableConfig) -> tuple[str, str]:
+    """长期记忆按 user_id 隔离的 namespace。"""
+    user_id = (config.get("configurable") or {}).get("user_id", "anonymous")
+    return (MEMORY_NAMESPACE, user_id)
+
+
+# ---------- 短期记忆：指代消解 ----------
+
+_CONTEXTUALIZE_PROMPT = """下面是医疗问诊的对话历史和用户最新一句话。
+请把最新这句改写成一个**自包含、可独立检索**的问题：把「它/那个/上述/这种药」等指代
+替换成历史中明确的实体。若最新这句本身已自包含，原样返回。只输出改写后的问题，不要解释。
+
+对话历史：
+{history}
+
+最新这句：{question}
+
+改写后的问题："""
+
+
+def contextualize(state: MedState, *, llm) -> dict:
+    """用最近几轮历史把当前问题改写成自包含问题；首轮无历史则原样。"""
+    history = state.get("history", [])
+    if not history:
+        return {"standalone_question": state["question"]}
+    recent = history[-2 * HISTORY_WINDOW:]  # 一轮含 user+assistant 两条
+    history_text = "\n".join(f"{h['role']}：{h['content']}" for h in recent)
+    msg = llm.invoke([
+        ("system", "你是医疗问诊的指代消解器，只输出改写后的问题本身。"),
+        ("human", _CONTEXTUALIZE_PROMPT.format(history=history_text, question=state["question"])),
+    ])
+    return {"standalone_question": msg.content.strip() or state["question"]}
+
+
+# ---------- 长期记忆：召回 ----------
+
+def recall_memory(state: MedState, config: RunnableConfig, *, store: BaseStore) -> dict:
+    """按 user_id 从长期记忆语义召回与当前问题相关的健康事实。"""
+    q = state.get("standalone_question") or state["question"]
+    items = store.search(_user_ns(config), query=q, limit=MEMORY_RECALL_K)
+    return {"user_memory": [it.value["text"] for it in items]}
+
 
 # ---------- Planning ----------
 
@@ -25,12 +76,13 @@ class SubQuestions(BaseModel):
 
 
 def plan(state: MedState, *, llm) -> dict:
+    question = state.get("standalone_question") or state["question"]
     structured = llm.with_structured_output(SubQuestions, method="json_mode")
     result = structured.invoke([
         ("system", '你是医疗问答规划器，只输出合法 JSON，格式：{"questions": [...]}'),
-        ("human", _PLAN_PROMPT.format(question=state["question"])),
+        ("human", _PLAN_PROMPT.format(question=question)),
     ])
-    subs = result.questions or [state["question"]]
+    subs = result.questions or [question]
     return {"plan_questions": subs, "sub_questions": subs}
 
 
@@ -55,8 +107,9 @@ def retrieve_external(state: MedState) -> dict:
     """对原问题做 Web 搜索。用户未开启联网则跳过；失败则优雅降级为空。"""
     if not state.get("use_external"):
         return {"external_evidence": []}
+    q = state.get("standalone_question") or state["question"]
     try:
-        hits = web_search(state["question"])
+        hits = web_search(q)
     except Exception as e:
         print(f"[warn] 外部检索失败，仅用内部源：{type(e).__name__}: {e}")
         return {"external_evidence": []}
@@ -76,21 +129,26 @@ def fuse(state: MedState) -> dict:
     pool = state["internal_evidence"] + state["external_evidence"]
     if not pool:
         return {"evidence": []}
+    q = state.get("standalone_question") or state["question"]
     docs = [e["text"] for e in pool]
-    ranked = rerank(state["question"], docs, top_n=min(FUSE_TOP_K, len(docs)))
+    ranked = rerank(q, docs, top_n=min(FUSE_TOP_K, len(docs)))
     return {"evidence": [{**pool[r["index"]], "score": r["relevance_score"]} for r in ranked]}
 
 
 # ---------- 作答 ----------
 
-_SYSTEM = "你是严谨的医疗知识助手。只依据提供的资料回答，绝不编造；资料不足就如实说明。"
+_SYSTEM = (
+    "你是严谨的医疗知识助手。只依据提供的资料回答，绝不编造；资料不足就如实说明。"
+    "若已知用户的健康背景（过敏史/慢病/在用药）与用药建议存在安全冲突，必须主动提示。"
+)
 
 _ANSWER_PROMPT = """根据以下资料回答问题。资料来自内部医学教材与外部网络两类来源。要求：
 1. 只用资料中的信息，不要编造。
 2. 在关键结论后用 [编号] 标注依据。
 3. 若内部与外部资料冲突，指出分歧。
 4. 若资料不足以回答，如实说明。
-
+5. 结合「用户健康背景」作答；若建议的药物与用户过敏史/禁忌冲突，必须主动提示并给替代方向。
+{memory_block}
 资料：
 {context}
 
@@ -99,14 +157,64 @@ _ANSWER_PROMPT = """根据以下资料回答问题。资料来自内部医学教
 
 
 def answer(state: MedState, *, llm) -> dict:
+    question = state.get("standalone_question") or state["question"]
     ev = state["evidence"]
     if not ev:
-        return {"answer": "根据现有资料无法回答（未检索到相关内容）。"}
+        ans = "根据现有资料无法回答（未检索到相关内容）。"
+        return {"answer": ans, "history": [
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": ans},
+        ]}
     context = "\n\n".join(
         f"[{i + 1}]（{e['source']}）{e['text']}" for i, e in enumerate(ev)
     )
+    mem = state.get("user_memory") or []
+    memory_block = (
+        "\n用户健康背景（来自长期记忆，作答务必纳入考虑）：\n"
+        + "\n".join(f"- {m}" for m in mem) + "\n"
+    ) if mem else ""
     msg = llm.invoke([
         ("system", _SYSTEM),
-        ("human", _ANSWER_PROMPT.format(context=context, question=state["question"])),
+        ("human", _ANSWER_PROMPT.format(memory_block=memory_block, context=context, question=question)),
     ])
-    return {"answer": msg.content.strip()}
+    ans = msg.content.strip()
+    return {"answer": ans, "history": [
+        {"role": "user", "content": question},
+        {"role": "assistant", "content": ans},
+    ]}
+
+
+# ---------- 长期记忆：自动抽取写回 ----------
+
+_EXTRACT_PROMPT = """从用户这句话里抽取**值得长期记住的健康事实**，只抽取用户**明确陈述**的：
+- 过敏史（如对某药/某物过敏）
+- 慢性病/既往病史（如高血压、二型糖尿病）
+- 长期/正在使用的药物
+
+每条写成一句简洁的事实陈述（如「对青霉素过敏」「患有二型糖尿病」）。
+如果这句话里没有这类信息，返回空列表。不要臆测、不要把一次性的症状当成长期事实。
+
+用户这句话：{utterance}"""
+
+
+class HealthFacts(BaseModel):
+    facts: list[str]
+
+
+def extract_memory(state: MedState, config: RunnableConfig, *, llm, store: BaseStore) -> dict:
+    """从本轮用户原始输入抽取健康事实，逐条写入长期记忆。"""
+    structured = llm.with_structured_output(HealthFacts, method="json_mode")
+    try:
+        result = structured.invoke([
+            ("system", '你是健康信息抽取器，只输出合法 JSON，格式：{"facts": [...]}'),
+            ("human", _EXTRACT_PROMPT.format(utterance=state["question"])),
+        ])
+    except Exception as e:
+        print(f"[warn] 记忆抽取失败，跳过：{type(e).__name__}: {e}")
+        return {}
+    ns = _user_ns(config)
+    for fact in result.facts:
+        fact = fact.strip()
+        if fact:
+            store.put(ns, str(uuid.uuid4()), {"text": fact})
+    return {}

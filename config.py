@@ -47,3 +47,9 @@ FUSE_TOP_K = int(os.getenv("FUSE_TOP_K", "6"))             # 内外部证据融�
 # BGE-large-zh max_tokens=512，中文约 1 字≈1 token，故 chunk 控制在 400 字以内最稳。
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
+
+# --- 记忆（P5）---
+# 短期：会话内多轮（checkpointer，按 thread_id）；长期：跨会话用户健康事实（Store，按 user_id）。
+MEMORY_NAMESPACE = os.getenv("MEMORY_NAMESPACE", "memories")  # 长期记忆 Store 的 namespace 前缀
+MEMORY_RECALL_K = int(os.getenv("MEMORY_RECALL_K", "3"))      # 每轮从长期记忆语义召回条数
+HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "4"))        # 指代消解参考的最近对话轮数

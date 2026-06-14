@@ -17,20 +17,28 @@
 ## 图主干（当前）
 
 ```
-question → plan → retrieve_internal(Qdrant 教材)
+question → contextualize(用 history 指代消解 → standalone_question)   [短期记忆]
+        → recall_memory(按 user_id 从 Store 召回健康事实)             [长期记忆·读]
+        → plan → retrieve_internal(Qdrant 教材)
                → retrieve_external(Tavily Web，用户开关 use_external)
-               → fuse(合并去重 → 对原问题统一重排 top-k)
-               → answer(带 [编号] 引用) → END
+               → fuse(合并去重 → 统一重排 top-k)
+               → answer(结合用户背景 + 证据，带 [编号] 引用，安全提示)
+               → extract_memory(抽取本轮健康事实写回 Store)           [长期记忆·写] → END
 ```
+
+记忆挂载（`med_graph.py`）：`compile(checkpointer=InMemorySaver(), store=InMemoryStore(index=BGE))`；
+invoke 传 `config={"configurable": {"thread_id": session_id, "user_id": user_id}}`。内存版重启清空。
 
 ## 四大支柱 → LangGraph 映射
 
 - **Planning**：`plan` 节点把复合问诊**平行拆解**成 1-3 个方面子问题（机理 / 用药 / 副作用…）。
   桥接型（后一跳依赖前一跳答案）的链式精化设计见 `docs/P2_5_DESIGN.md`。
 - **Tool Use**：内部混合检索（`kb_search`：BGE 向量 + BM25 + RRF + 重排）+ 外部 Tavily（`external`）。
+- **Memory（已实现 P5）**：短期 `InMemorySaver`（checkpointer，按 thread_id）撑会话内多轮，
+  `contextualize` 节点做指代消解；长期 `InMemoryStore`（BGE 语义检索，按 user_id namespace），
+  `recall_memory` 召回 + `extract_memory` 自动抽取用户过敏史/慢病/用药，作答时注入做安全提示。
+  内存版重启清空（生产可换 SqliteSaver + Qdrant-backed Store）。
 - **Reflection（路线图 P4）**：answer 后加 `reflect` 自判证据是否充分，不足则换源补检索，带修订上限。
-- **Memory（路线图 P5）**：短期 checkpointer 撑会话内多轮（指代消解）；长期 Store（BGE 语义检索）
-  记用户过敏史 / 慢病 + 事实缓存。
 
 ## 技术栈与硬约束
 

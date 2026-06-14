@@ -1,17 +1,22 @@
 # 医疗知识助手（医疗 RAG Agent）
 
-内外部知识融合的中文医疗问答助手：用户提一个（可能跨多方面的）医疗问题，Agent 规划检索、
-在**内部医学教材库**（Qdrant 混合检索）和**外部 Web**（Tavily 联网）两路找证据，融合重排后由
-**DeepSeek 带 `[编号]` 引用作答**，严格防幻觉、可溯源。用 LangGraph 编排，对外是 FastAPI +
-网页前端，用 Docker compose 部署。
+内外部知识融合、带记忆的中文医疗问答助手：用户提一个（可能跨多方面的）医疗问题，Agent 先按
+会话历史做**指代消解**、召回**用户健康背景**（过敏史/慢病），再规划检索、在**内部医学教材库**
+（Qdrant 混合检索）和**外部 Web**（Tavily 联网）两路找证据，融合重排后由 **DeepSeek 带 `[编号]`
+引用作答**（结合用户背景做安全提示），严格防幻觉、可溯源。用 LangGraph 编排（含 checkpointer
+短期记忆 + Store 长期记忆），对外是 FastAPI + 聊天式网页前端，用 Docker compose 部署。
 
 > ⚠️ 本项目仅供学习演示，**非医疗建议**；如有健康问题请咨询专业医师。
 
 ## 整体数据流
 
 ```
-用户问题
+用户问题（带 session_id 短期 / user_id 长期）
    │
+   ▼
+[contextualize] 用会话历史把问题改写成自包含问题（指代消解，首轮跳过）   [短期记忆]
+   ▼
+[recall_memory] 按 user_id 从 Store 语义召回相关健康事实（过敏/慢病）     [长期记忆·读]
    ▼
 [plan]  把复合问诊拆成 1-3 个方面子问题（结构化 JSON 输出）
    │
@@ -24,9 +29,11 @@
    │                      │
    └──────────┬───────────┘
               ▼
-          [fuse]  内外部证据合并 → 对原问题统一重排 → top-k
+          [fuse]  内外部证据合并 → 统一重排 → top-k
               ▼
-          [answer]  只依据资料作答，关键结论标 [编号]，不足如实说明
+          [answer]  结合用户健康背景 + 证据作答，标 [编号]，安全冲突主动提示
+              ▼
+          [extract_memory] 自动抽取本轮用户健康事实写回 Store           [长期记忆·写]
               ▼
           带引用的答案 + 证据来源列表
 ```
@@ -78,10 +85,11 @@ pip install -r requirements.txt
 cp .env.example .env          # 填密钥与模型 UID
 
 python ingest.py --recreate   # 灌库（首次，走 Xinference 向量化）
-python med_rag.py "二甲双胍的副作用和禁忌"          # CLI 问答
+python med_rag.py "二甲双胍的副作用和禁忌"          # CLI 单次问答
 python med_rag.py "高血压一线药的副作用" --web      # 融合联网
+python med_rag.py --chat                            # 多轮对话（带记忆：指代消解 + 用户健康记忆）
 
-uvicorn server:app --reload   # 起 Web 服务 → http://localhost:8000
+uvicorn server:app --reload   # 起 Web 服务（聊天式）→ http://localhost:8000
 ```
 
 ### Docker 部署
@@ -100,9 +108,10 @@ docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 | **P1** | 医疗 RAG 基线（问诊 → 混合检索 → 带引用作答） | ✅ |
 | **P2** | +Planning（复合问题拆方面 → 分方面检索 → 汇总） | ✅ |
 | **P3** | 知识融合（内部教材 KB + 外部 Tavily Web，带联网开关） | ✅ |
-| **P6** | FastAPI 服务 + 网页前端 + Docker 容器化（已端到端验证） | ✅ |
+| **P5** | +Memory（短期 checkpointer 多轮指代消解 + 长期 Store 用户健康记忆，自动抽取+召回+安全提示） | ✅ |
+| **P6** | FastAPI 服务 + 聊天式网页前端 + Docker 容器化（已端到端验证） | ✅ |
 | **P4** | +Reflection（答完自判证据充分性，不足换源补检索） | 🚧 待做 |
-| **P5** | +Memory（短期 checkpointer 多轮 + 长期 Store 用户记忆/事实缓存） | 🚧 待做 |
+| 持久化记忆 | 内存版 → SqliteSaver + Qdrant-backed Store（重启不丢） | 🚧 待做 |
 
 ## 评测
 
@@ -114,5 +123,6 @@ docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 - `docs/INTERVIEW.md` — 面试速查（Agent 概念 + 项目解读 + Docker 部署）
 - `docs/P0_WALKTHROUGH.md` — 灌库与 Qdrant 操作走查
 - `docs/P1_DESIGN.md` / `docs/P2_5_DESIGN.md` — 基线与多跳设计
+- `docs/P5_DESIGN.md` — 记忆（短期多轮 + 长期用户记忆）设计与验证
 - `docs/HYBRID_RETRIEVAL_EVIDENCE.md` — 混合检索实证
 - `docs/P6_DEPLOY.md` — Docker 部署详解
