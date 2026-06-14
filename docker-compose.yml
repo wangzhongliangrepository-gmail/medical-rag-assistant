@@ -1,0 +1,29 @@
+# 医疗知识助手部署编排：app(FastAPI) + qdrant(向量库服务器)
+# Xinference(BGE, GPU) 留在宿主机，app 通过 host.docker.internal 连接。
+# DeepSeek / Tavily 为外部 API，密钥经 .env 注入。
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env                                   # DEEPSEEK_API_KEY / TAVILY_API_KEY / 模型 UID
+    environment:
+      - QDRANT_URL=http://qdrant:6333          # 连容器内 qdrant（覆盖本地落盘模式）
+      - XINFERENCE_URL=http://host.docker.internal:9997  # 连宿主机 GPU 上的 Xinference
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+
+volumes:
+  qdrant_storage:

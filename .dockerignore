@@ -1,0 +1,18 @@
+# 密钥（经 compose 的 env_file 运行时注入，不烤进镜像）
+.env
+
+# 大数据集（灌库在宿主机跑，app 镜像不需要）
+medical_data/
+
+# 本地落盘向量库（容器用 qdrant 服务器，不需要）
+qdrant_db/
+
+# Python 缓存 / 日志 / 杂项
+__pycache__/
+*.py[cod]
+*.log
+*_out.txt
+*_err.txt
+.git/
+.idea/
+docs/
