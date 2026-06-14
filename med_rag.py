@@ -34,12 +34,12 @@ def _print_result(question: str, result: dict, show_sources: bool = True) -> Non
             print(f"       {snippet}...")
 
 
-def run_chat(graph, use_external: bool) -> None:
+def run_chat(graph, use_external: bool, model_tier: str = "flash") -> None:
     """多轮交互：固定 user_id + thread_id，连续对话，记忆生效。"""
     user_id = "cli-user"
     thread_id = f"cli-{uuid.uuid4().hex[:8]}"
-    config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
-    print("进入多轮对话模式（输入 exit / quit 退出）。"
+    config = {"configurable": {"thread_id": thread_id, "user_id": user_id, "model_tier": model_tier}}
+    print(f"进入多轮对话模式（输入 exit / quit 退出）。  [模型 {model_tier}]"
           + ("  [联网开]" if use_external else "  [仅内部]"))
     while True:
         try:
@@ -64,19 +64,22 @@ def main() -> None:
                         help="联网搜索：融合外部 Web（默认关，仅查内部教材库，更快）")
     parser.add_argument("--chat", action="store_true",
                         help="多轮对话模式（带记忆：指代消解 + 长期用户记忆）")
+    parser.add_argument("--pro", action="store_true",
+                        help="用 deepseek-v4-pro（更强推理；默认 flash 更快）")
     args = parser.parse_args()
 
     graph = get_med_graph()
+    model_tier = "pro" if args.pro else "flash"
 
     if args.chat:
-        run_chat(graph, use_external=args.web)
+        run_chat(graph, use_external=args.web, model_tier=model_tier)
         return
 
     if not args.question:
         parser.error("请给出问题，或用 --chat 进入多轮模式")
 
     # 单次模式：一次性 thread，不复用历史
-    config = {"configurable": {"thread_id": str(uuid.uuid4()), "user_id": "cli-user"}}
+    config = {"configurable": {"thread_id": str(uuid.uuid4()), "user_id": "cli-user", "model_tier": model_tier}}
     result = graph.invoke({"question": args.question, "use_external": args.web}, config=config)
 
     mode = "内部教材 + 联网 Web" if args.web else "仅内部教材"

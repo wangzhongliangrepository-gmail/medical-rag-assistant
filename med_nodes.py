@@ -7,15 +7,25 @@ contextualize → recall_memory → plan → retrieve_internal + retrieve_extern
              → fuse → answer → extract_memory
 """
 import uuid
+from functools import lru_cache
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.store.base import BaseStore
 from pydantic import BaseModel
 
-from config import FUSE_TOP_K, HISTORY_WINDOW, MEMORY_NAMESPACE, MEMORY_RECALL_K, RERANK_TOP_K
+from config import (
+    FUSE_TOP_K,
+    HISTORY_WINDOW,
+    LLM_FLASH,
+    LLM_PRO,
+    MEMORY_NAMESPACE,
+    MEMORY_RECALL_K,
+    RERANK_TOP_K,
+)
 from embeddings import rerank
 from external import web_search
 from kb_search import search
+from llm import get_llm
 from med_state import MedState
 
 
@@ -23,6 +33,17 @@ def _user_ns(config: RunnableConfig) -> tuple[str, str]:
     """长期记忆按 user_id 隔离的 namespace。"""
     user_id = (config.get("configurable") or {}).get("user_id", "anonymous")
     return (MEMORY_NAMESPACE, user_id)
+
+
+@lru_cache(maxsize=4)
+def _cached_llm(model: str):
+    return get_llm(model=model)
+
+
+def _llm(config: RunnableConfig):
+    """按请求参数（model_tier: flash/pro）动态选模型；checkpointer/store 仍共享，切模型不丢记忆。"""
+    tier = (config.get("configurable") or {}).get("model_tier", "flash")
+    return _cached_llm(LLM_PRO if tier == "pro" else LLM_FLASH)
 
 
 # ---------- 短期记忆：指代消解 ----------
@@ -39,11 +60,12 @@ _CONTEXTUALIZE_PROMPT = """下面是医疗问诊的对话历史和用户最新�
 改写后的问题："""
 
 
-def contextualize(state: MedState, *, llm) -> dict:
+def contextualize(state: MedState, config: RunnableConfig) -> dict:
     """用最近几轮历史把当前问题改写成自包含问题；首轮无历史则原样。"""
     history = state.get("history", [])
     if not history:
         return {"standalone_question": state["question"]}
+    llm = _llm(config)
     recent = history[-2 * HISTORY_WINDOW:]  # 一轮含 user+assistant 两条
     history_text = "\n".join(f"{h['role']}：{h['content']}" for h in recent)
     msg = llm.invoke([
@@ -75,9 +97,9 @@ class SubQuestions(BaseModel):
     questions: list[str]
 
 
-def plan(state: MedState, *, llm) -> dict:
+def plan(state: MedState, config: RunnableConfig) -> dict:
     question = state.get("standalone_question") or state["question"]
-    structured = llm.with_structured_output(SubQuestions, method="json_mode")
+    structured = _llm(config).with_structured_output(SubQuestions, method="json_mode")
     result = structured.invoke([
         ("system", '你是医疗问答规划器，只输出合法 JSON，格式：{"questions": [...]}'),
         ("human", _PLAN_PROMPT.format(question=question)),
@@ -156,8 +178,9 @@ _ANSWER_PROMPT = """根据以下资料回答问题。资料来自内部医学教
 答案："""
 
 
-def answer(state: MedState, *, llm) -> dict:
+def answer(state: MedState, config: RunnableConfig) -> dict:
     question = state.get("standalone_question") or state["question"]
+    llm = _llm(config)
     ev = state["evidence"]
     if not ev:
         ans = "根据现有资料无法回答（未检索到相关内容）。"
@@ -201,9 +224,9 @@ class HealthFacts(BaseModel):
     facts: list[str]
 
 
-def extract_memory(state: MedState, config: RunnableConfig, *, llm, store: BaseStore) -> dict:
+def extract_memory(state: MedState, config: RunnableConfig, *, store: BaseStore) -> dict:
     """从本轮用户原始输入抽取健康事实，逐条写入长期记忆。"""
-    structured = llm.with_structured_output(HealthFacts, method="json_mode")
+    structured = _llm(config).with_structured_output(HealthFacts, method="json_mode")
     try:
         result = structured.invoke([
             ("system", '你是健康信息抽取器，只输出合法 JSON，格式：{"facts": [...]}'),

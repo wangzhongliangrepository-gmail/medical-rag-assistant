@@ -50,6 +50,25 @@
     .toggle-row input { width: 16px; height: 16px; }
     .loading { color: #6b7a8d; }
     .disclaimer { color: #b06b00; font-size: 12px; margin-top: 12px; }
+    /* 模型选择胶囊 */
+    .controls-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; }
+    .model-wrap { position: relative; }
+    .model-pill {
+      display: inline-flex; align-items: center; gap: 6px; background: #1a2b3c; color: #fff;
+      font-size: 13px; padding: 6px 12px; border-radius: 16px; cursor: pointer; border: none;
+    }
+    .model-pill .tier { color: #9bb0c5; }
+    .model-pill .caret { color: #9bb0c5; font-size: 11px; }
+    .model-menu {
+      position: absolute; right: 0; bottom: 38px; background: #fff; border: 1px solid #cfd8e3;
+      border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12); overflow: hidden;
+      min-width: 220px; display: none; z-index: 10;
+    }
+    .model-menu.open { display: block; }
+    .model-item { padding: 10px 14px; cursor: pointer; font-size: 14px; color: #1a2b3c; }
+    .model-item:hover { background: #eef4fe; }
+    .model-item.active { background: #f0f6ff; }
+    .model-item .desc { font-size: 12px; color: #8a97a8; margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -63,10 +82,27 @@
 
   <div id="chat"></div>
 
-  <label class="toggle-row">
-    <input type="checkbox" id="web" />
-    🌐 联网搜索（融合外部 Web；关闭则仅查内部教材，更快）
-  </label>
+  <div class="controls-row">
+    <label class="toggle-row">
+      <input type="checkbox" id="web" />
+      🌐 联网搜索（融合外部 Web；关闭则仅查内部教材，更快）
+    </label>
+    <div class="model-wrap">
+      <button class="model-pill" id="model-pill" onclick="toggleModelMenu(event)">
+        <span id="model-name">DeepSeek Flash</span>
+        <span class="tier" id="model-tier">快</span>
+        <span class="caret">⌄</span>
+      </button>
+      <div class="model-menu" id="model-menu">
+        <div class="model-item" data-model="flash" onclick="selectModel('flash')">
+          DeepSeek Flash<div class="desc">快、便宜，日常问答（默认）</div>
+        </div>
+        <div class="model-item" data-model="pro" onclick="selectModel('pro')">
+          DeepSeek Pro<div class="desc">更强推理，复杂 / 疑难问题</div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="input-row">
     <input id="q" placeholder="输入医疗问题，例如：二甲双胍的副作用和禁忌" />
     <button id="ask" onclick="ask()">发送</button>
@@ -91,6 +127,22 @@
       $("uid-label").textContent = "用户 " + USER_ID.slice(0, 8) + " ｜ 会话 " + SESSION_ID.slice(0, 8);
       $("q").focus();
     }
+
+    // 模型选择（flash / pro），存 localStorage
+    let MODEL = localStorage.getItem("med_model") || "flash";
+    function renderModel() {
+      $("model-name").textContent = MODEL === "pro" ? "DeepSeek Pro" : "DeepSeek Flash";
+      $("model-tier").textContent = MODEL === "pro" ? "强" : "快";
+      document.querySelectorAll(".model-item").forEach((el) =>
+        el.classList.toggle("active", el.dataset.model === MODEL));
+    }
+    function toggleModelMenu(e) { e.stopPropagation(); $("model-menu").classList.toggle("open"); }
+    function selectModel(m) {
+      MODEL = m; localStorage.setItem("med_model", m);
+      renderModel(); $("model-menu").classList.remove("open");
+    }
+    document.addEventListener("click", () => $("model-menu").classList.remove("open"));
+    renderModel();
 
     function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
     function md(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
@@ -148,7 +200,7 @@
         const resp = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: q, use_external: useWeb, session_id: SESSION_ID, user_id: USER_ID }),
+          body: JSON.stringify({ question: q, use_external: useWeb, session_id: SESSION_ID, user_id: USER_ID, model: MODEL }),
         });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         const d = await resp.json();

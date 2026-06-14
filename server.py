@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
     use_external: bool = False              # 联网搜索开关（前端按钮）
     session_id: str = ""                    # 会话 id → 短期记忆 thread_id（空则单次）
     user_id: str = "anonymous"             # 用户 id → 长期记忆 namespace
+    model: str = "flash"                    # 模型档位：flash（快）/ pro（强）
 
 
 class EvidenceItem(BaseModel):
@@ -59,7 +60,8 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     thread_id = req.session_id or str(uuid.uuid4())  # 无 session 则一次性 thread
-    config = {"configurable": {"thread_id": thread_id, "user_id": req.user_id}}
+    model_tier = "pro" if req.model == "pro" else "flash"
+    config = {"configurable": {"thread_id": thread_id, "user_id": req.user_id, "model_tier": model_tier}}
     result = GRAPH.invoke(
         {"question": req.question, "use_external": req.use_external},
         config=config,
