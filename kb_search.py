@@ -1,13 +1,12 @@
 """在 Qdrant 医疗库上做混合检索：dense + sparse → RRF 融合 → BGE 重排。
 
-两段式：
-  ① 召回：dense(bge-m3) 与 sparse(BM25) 各召回 RECALL_K 条 → Qdrant RRF 融合
-  ② 精排：bge-reranker-v2-m3 对融合候选重排，取 top_k
+返回带来源元数据（source_id / chunk_id）的证据，供带引用作答使用。
 
-用法：
+用法（直接看检索结果）：
   python kb_search.py "氨氯地平能降血压吗"
   python kb_search.py "高血压怎么治" --topk 5
 """
+import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 
 import sparse
@@ -23,12 +22,14 @@ from qdrant_client import models
 from vectordb import get_client
 
 
-def hybrid_recall(query: str, recall: int = RECALL_K) -> list[str]:
-    """dense + sparse 双路召回，Qdrant 内 RRF 融合，返回候选原文。"""
+def hybrid_recall(query: str, recall: int = RECALL_K) -> list[dict]:
+    """dense + sparse 双路召回 + Qdrant RRF 融合，返回带元数据的候选。
+
+    每项：{"text", "source_id", "chunk_id"}
+    """
     client = get_client()
     dense_q = get_embeddings().embed_query(query)
     sidx, sval = sparse.embed_query(query)
-
     hits = client.query_points(
         collection_name=QDRANT_COLLECTION,
         prefetch=[
@@ -43,15 +44,27 @@ def hybrid_recall(query: str, recall: int = RECALL_K) -> list[str]:
         limit=recall,
         with_payload=True,
     ).points
-    return [h.payload["text"] for h in hits]
+    return [
+        {
+            "text": h.payload["text"],
+            "source_id": h.payload["source_id"],
+            "chunk_id": h.payload["chunk_id"],
+        }
+        for h in hits
+    ]
 
 
 def search(query: str, recall: int = RECALL_K, top_k: int = RERANK_TOP_K) -> list[dict]:
-    docs = hybrid_recall(query, recall)
-    if not docs:
+    """混合召回 + BGE 重排，返回 top_k 带 score 与来源的证据。
+
+    每项：{"text", "source_id", "chunk_id", "score"}
+    """
+    cands = hybrid_recall(query, recall)
+    if not cands:
         return []
+    docs = [c["text"] for c in cands]
     ranked = rerank(query, docs, top_n=top_k)
-    return [{"score": r["relevance_score"], "text": docs[r["index"]]} for r in ranked]
+    return [{**cands[r["index"]], "score": r["relevance_score"]} for r in ranked]
 
 
 def main() -> None:
@@ -67,7 +80,7 @@ def main() -> None:
         return
     print(f"\nQ: {args.query}\n")
     for i, r in enumerate(results, 1):
-        print(f"[{i}] score={r['score']:.3f}")
+        print(f"[{i}] score={r['score']:.3f}  教材段#{r['source_id']}")
         print(f"    {r['text'][:200]}...")
         print()
 

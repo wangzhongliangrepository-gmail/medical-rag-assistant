@@ -12,6 +12,7 @@
   python ingest.py --limit 200 --recreate   # 小批验证
   python ingest.py --recreate               # 全量 8475 条
 """
+import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 import json
 import shutil

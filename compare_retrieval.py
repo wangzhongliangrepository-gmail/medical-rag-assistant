@@ -7,6 +7,7 @@
   python compare_retrieval.py "氨氯地平的降压机制"
   python compare_retrieval.py "吃药为什么要按体重调整剂量" --k 5
 """
+import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 
 import sparse
