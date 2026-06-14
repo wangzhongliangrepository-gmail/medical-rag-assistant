@@ -15,11 +15,15 @@ DISCLAIMER = "⚠️ 本回答仅供学习演示，非医疗建议；如有健�
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("question", help="医疗问题")
+    parser.add_argument("--web", action="store_true",
+                        help="联网搜索：融合外部 Web（默认关，仅查内部教材库，更快）")
     args = parser.parse_args()
 
     graph = get_med_graph()
-    result = graph.invoke({"question": args.question})
+    result = graph.invoke({"question": args.question, "use_external": args.web})
 
+    mode = "内部教材 + 联网 Web" if args.web else "仅内部教材"
+    print(f"\n[模式] {mode}")
     print(f"\nQ: {args.question}\n")
     print("规划子问题:")
     for sq in result.get("sub_questions", []):

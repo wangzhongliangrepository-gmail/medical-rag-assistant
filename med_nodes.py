@@ -52,7 +52,9 @@ def retrieve_internal(state: MedState) -> dict:
 # ---------- 外部源：Tavily Web ----------
 
 def retrieve_external(state: MedState) -> dict:
-    """对原问题做 Web 搜索（外部源失败则优雅降级为空，不影响内部）。"""
+    """对原问题做 Web 搜索。用户未开启联网则跳过；失败则优雅降级为空。"""
+    if not state.get("use_external"):
+        return {"external_evidence": []}
     try:
         hits = web_search(state["question"])
     except Exception as e:
