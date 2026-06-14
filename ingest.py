@@ -14,6 +14,7 @@
 """
 import argparse
 import json
+import shutil
 import uuid
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from config import (
     DENSE_VECTOR_NAME,
     EMBED_DIM,
     QDRANT_COLLECTION,
+    QDRANT_PATH,
+    QDRANT_URL,
     SPARSE_VECTOR_NAME,
 )
 from embeddings import get_embeddings
@@ -91,6 +94,9 @@ def main() -> None:
     print(f"      源段落 {'(前%d条)' % args.limit if args.limit else '(全量)'} → {len(chunks)} 个 chunk")
 
     print("[2/4] 连接 Qdrant 并准备集合（dense + sparse）...")
+    if args.recreate and not QDRANT_URL:
+        # 本地落盘模式：delete_collection 无法彻底 purge 旧数据，直接清目录确保干净
+        shutil.rmtree(QDRANT_PATH, ignore_errors=True)
     client = get_client()
     ensure_collection(client, args.recreate)
 
