@@ -21,6 +21,10 @@ def main() -> None:
     result = graph.invoke({"question": args.question})
 
     print(f"\nQ: {args.question}\n")
+    print("规划子问题:")
+    for sq in result.get("sub_questions", []):
+        print(f"  - {sq}")
+    print()
     print(f"A: {result['answer']}\n")
     print("来源:")
     for i, e in enumerate(result["evidence"], 1):
