@@ -1,69 +1,95 @@
-# CLAUDE.md — 个人学习助手 Agent
+# CLAUDE.md — 医疗知识助手
 
 给 Claude Code 的项目上下文。开始任何任务前先读本文件，并遵循其中的约束。
 
 ## 项目目标
 
-用 LangGraph 构建一个「个人学习助手 Agent」：用户提一个（可能要跨多段资料综合的）问题，Agent 规划检索步骤、调检索工具找证据、用记忆积累上下文与经验、用反思判断证据是否充分并改写，最后给出带引用的回答。
+用 LangGraph 构建一个「医疗知识助手」：用户提一个（可能跨多方面的）医疗问题，Agent 规划
+检索步骤、在内部医学教材库（Qdrant 混合检索）与外部 Web（Tavily 联网）两路找证据、融合
+重排，最后由 DeepSeek 给出**带 `[编号]` 引用、严格防幻觉、可溯源**的回答。
 
-简历定位：一个同时落地 Agent 四大支柱（Memory / Planning / Tool Use / Reflection）、且有客观评测指标的项目。叙事核心是「基线 + 逐层改进 + 消融」——每加一个支柱，报告一次 EM/F1 增量。
+定位：一个落地的检索增强（RAG）+ Agent 应用——混合检索 + 知识融合 + 带引用作答，
+可 CLI / Web / Docker 运行。逐层演进：基线 → Planning → 知识融合 → 部署 →（后续）反思 / 记忆。
+
+> ⚠️ 医疗高风险场景：作答只依据检索到的资料，资料不足必须如实说明，对外一律附免责声明
+> 「仅供学习演示，非医疗建议」。
+
+## 图主干（当前）
+
+```
+question → plan → retrieve_internal(Qdrant 教材)
+               → retrieve_external(Tavily Web，用户开关 use_external)
+               → fuse(合并去重 → 对原问题统一重排 top-k)
+               → answer(带 [编号] 引用) → END
+```
 
 ## 四大支柱 → LangGraph 映射
 
-- **Planning**：plan-and-execute。planner 节点把问题拆成子问题 / 检索计划。
-- **Tool Use**：检索工具（BGE 向量检索 + 重排）。
-- **Memory**：
-  - 短期 / 工作记忆：线程内 state，靠 checkpointer 持久化。
-  - 长期记忆：跨线程 Store（带 BGE 语义检索），两个 namespace——事实缓存 + 经验 / 教训库。
-- **Reflection**：Reflexion 式。reflect 节点批判当前证据与草稿（够不够、有无臆造），不够则回到 planner / retrieve，带修订次数上限。
-
-图主干：`question → planner → retrieve → draft → reflect →（够了→finalize / 不够→planner，≤N 轮）→ distill（写长期记忆）→ 输出答案+引用`。
+- **Planning**：`plan` 节点把复合问诊**平行拆解**成 1-3 个方面子问题（机理 / 用药 / 副作用…）。
+  桥接型（后一跳依赖前一跳答案）的链式精化设计见 `docs/P2_5_DESIGN.md`。
+- **Tool Use**：内部混合检索（`kb_search`：BGE 向量 + BM25 + RRF + 重排）+ 外部 Tavily（`external`）。
+- **Reflection（路线图 P4）**：answer 后加 `reflect` 自判证据是否充分，不足则换源补检索，带修订上限。
+- **Memory（路线图 P5）**：短期 checkpointer 撑会话内多轮（指代消解）；长期 Store（BGE 语义检索）
+  记用户过敏史 / 慢病 + 事实缓存。
 
 ## 技术栈与硬约束
 
 **LLM：DeepSeek V4 云端 API，经 langchain-deepseek 的 ChatDeepSeek 接入。**
-- 默认 `deepseek-v4-flash`（快、便宜，支持工具调用与结构化输出）。难节点（planner、reflect）可选 `deepseek-v4-pro`。
-- 不要用 `deepseek-chat` / `deepseek-reasoner`——这两个旧别名 2026-07-24 停用。
+- 默认 `deepseek-v4-flash`（快、便宜，支持工具调用与结构化输出）。难节点可选 `deepseek-v4-pro`。
+- 不要用 `deepseek-chat` / `deepseek-reasoner`——旧别名 2026-07-24 停用。
 - DeepSeek 思考内容在独立的 reasoning_content 字段，`.content` 是干净的，不需要剥 `<think>`。
-- 上下文缓存默认开启：把稳定的系统提示和重复的检索上下文放在 prompt 前部并保持一致，可命中缓存降本——这对 RAG/agent 反复重发上下文很有用。
+- 上下文缓存默认开启：稳定系统提示与重复检索上下文放 prompt 前部并保持一致，可命中缓存降本。
 
-**向量化 + 重排：Xinference 上的 BGE（本地，经 SSH 隧道 9997）。**
-- DeepSeek 没有 embedding 接口，所以这部分留在 Xinference，别试图用 DeepSeek 做向量化。
+**向量化 + 重排：Xinference 上的 BGE（本地 GPU，经 SSH 隧道 9997 或 host.docker.internal）。**
+- DeepSeek 没有 embedding 接口，这部分留在 Xinference，别用 DeepSeek 做向量化。
 - `XinferenceEmbeddings` 用 model_uid（不是模型名）。
 - 重排没有现成 LangChain 封装，打 `/v1/rerank` REST（见 `embeddings.py`），不要自己造别的。
 
-**编排：LangGraph。** StateGraph + 条件边实现反思回路；checkpointer 管短期记忆，Store 管长期记忆。
+**向量库 + 混合检索：Qdrant。**
+- 命名向量集合：`dense`（bge-m3，1024 维 COSINE）+ `sparse`（FastEmbed BM25，IDF 由 Qdrant 库侧施加）。
+- 检索：dense + sparse 双路 Prefetch → Qdrant 原生 RRF 融合 → BGE 重排取 top-k（见 `kb_search.py`）。
+- 双模式：开发期本地落盘（`QDRANT_PATH`）；部署期连服务器（设 `QDRANT_URL`）。只切环境变量，零代码改动。
 
-**评测数据：HotpotQA distractor（datasets 加载）。** 每条自带 10 段 context（2 段金标 + 8 段干扰）；做 benchmark 时直接从这 10 段里检索，不必先建全库索引。指标：EM / F1，按 HotpotQA 官方口径做答案归一化（去标点、去冠词、小写、空白规整）。
+**外部源：Tavily Web 搜索（`external.py`）。** 联网开关 `use_external`；失败 try/except 优雅降级仅用内部源。
+
+**编排：LangGraph。** StateGraph 组装节点；后续反思回路用条件边，记忆用 checkpointer + Store。
+
+**服务 + 部署：FastAPI（`server.py`）+ 网页前端（`static/`）+ Docker（`docker-compose.yml` 编排 app + qdrant）。**
+- Xinference 留宿主机（GPU），app 容器经 `host.docker.internal:9997` 连。详见 `docs/P6_DEPLOY.md`。
 
 ## 目录
 
 ```
 config.py        端点 / 模型 / UID（.env 覆盖，唯一配置入口）
+_bootstrap.py    放行 OpenMP 重复加载（入口最先 import）
 llm.py           ChatDeepSeek 封装
-embeddings.py    Xinference 向量化 + 重排
-data.py          HotpotQA 加载
-smoke_test.py    M0 冒烟测试
-# 待建：
-state.py         图状态 TypedDict
-nodes.py         各节点函数
-graph.py         组装 StateGraph + compile
-eval.py          在 HotpotQA 上跑 EM / F1
+embeddings.py    Xinference BGE 向量化 + 重排
+sparse.py        FastEmbed BM25 稀疏向量
+vectordb.py      Qdrant 客户端工厂（本地/服务器双模式）
+ingest.py        灌库管道（切块 → dense+sparse → 写 Qdrant）
+kb_search.py     内部混合检索（dense+sparse RRF + 重排）
+external.py      Tavily Web 搜索
+med_state.py     图状态 MedState
+med_nodes.py     节点：plan / retrieve_internal / retrieve_external / fuse / answer
+med_graph.py     组装 StateGraph + compile
+med_rag.py       CLI 入口
+server.py        FastAPI 服务（/ /health /chat）
+static/index.html 网页前端
+compare_retrieval.py / dedup_kb.py   检索对比 / 去重工具
+Dockerfile / docker-compose.yml / .dockerignore   容器化
 ```
 
-## 里程碑
+## 评测
 
-- **M0 脚手架**：四条管道 + LangGraph 冒烟测试（已完成，跑 `python smoke_test.py` 验证）。
-- **M1 基线**：单跳 RAG。10 段 context 用 BGE 重排取 top-k → DeepSeek 直接答 → 在 validation 上算 EM/F1。这是对照基线。
-- **M2 +Planning**：plan-and-execute 多跳拆解 → 报 EM/F1 增量。
-- **M3 +Reflection**：Reflexion 回路 → 报增量。
-- **M4 +Memory**：短期 checkpointer + 长期 Store（事实缓存 + 经验记忆）→ 报准确率抬升 + 检索次数下降。
-- 全程接 LangSmith 追踪。
+医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge**
+评答案质量。见 `docs/P1_DESIGN.md`、`docs/HYBRID_RETRIEVAL_EVIDENCE.md`。
 
 ## 约定
 
-- 写代码前先读相关已有文件；所有端点 / 模型 / 密钥只从 `config.py` 取，不要在别处硬编码。
+- 写代码前先读相关已有文件；所有端点 / 模型 / 密钥只从 `config.py` 取，不在别处硬编码。
 - 密钥只放 `.env`，绝不写进代码、日志或提交。
-- 每个里程碑：先实现，再用 `eval.py` 量化，把指标填进 `README.md` 的结果表；改进一律对照基线报增量。
-- 解析模型输出时优先用结构化输出（DeepSeek 支持 JSON / 工具调用），不要用脆弱的正则去抠。
-- 改完跑一遍相关脚本验证再说「完成」。
+- 解析模型输出优先用结构化输出（DeepSeek 支持 JSON / 工具调用），不要用脆弱的正则去抠。
+- 医疗作答：只依据资料、不编造、不足明说、强制 `[编号]` 引用、附免责声明。
+- 入口脚本第一行 `import _bootstrap`（放行 OpenMP）再 import torch/onnx 相关。
+- 改完跑一遍相关脚本验证（`med_rag.py` / `kb_search.py` / `server` 健康检查）再说「完成」。
+- 每完成一个小阶段，提醒用户 git commit。

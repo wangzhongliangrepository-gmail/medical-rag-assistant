@@ -21,8 +21,7 @@ XINFERENCE_URL = os.getenv("XINFERENCE_URL", "http://localhost:9997")
 EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-m3")
 RERANK_MODEL_UID = os.getenv("RERANK_MODEL_UID", "bge-reranker-v2-m3")
 RERANK_TOP_K = int(os.getenv("RERANK_TOP_K", "3"))
-MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "3"))
-EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # bge-large-zh-v1.5 输出维度
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # bge-m3 输出维度
 
 # --- Qdrant 向量库（内部知识库）---
 # 开发期用本地嵌入模式（落盘，无需 Docker）；部署期改连服务器（QDRANT_URL）。

@@ -1,134 +1,118 @@
-# 个人学习助手 Agent（DeepSeek 版）
+# 医疗知识助手（医疗 RAG Agent）
 
-进度：M0 脚手架 → M1 单跳基线 → M2 +Planning → **M3 +Reflection（当前）** → M4 +Memory（待做）。
-四大支柱：Planning / Tool Use / Reflection / Memory，HotpotQA distractor 上以 EM/F1 量化逐层增量。
+内外部知识融合的中文医疗问答助手：用户提一个（可能跨多方面的）医疗问题，Agent 规划检索、
+在**内部医学教材库**（Qdrant 混合检索）和**外部 Web**（Tavily 联网）两路找证据，融合重排后由
+**DeepSeek 带 `[编号]` 引用作答**，严格防幻觉、可溯源。用 LangGraph 编排，对外是 FastAPI +
+网页前端，用 Docker compose 部署。
 
-目标：在写 agent 逻辑之前，先把四条管道打通——DeepSeek 能应答、BGE 能向量化、BGE 能重排、HotpotQA 能加载，外加确认 LangGraph 装好。
+> ⚠️ 本项目仅供学习演示，**非医疗建议**；如有健康问题请咨询专业医师。
 
-LLM 改用 DeepSeek 云端 API（不再跑本地 Qwen3）。向量化和重排仍走 Xinference 上的 BGE，因为 DeepSeek API 不提供 embedding 接口。
+## 整体数据流
+
+```
+用户问题
+   │
+   ▼
+[plan]  把复合问诊拆成 1-3 个方面子问题（结构化 JSON 输出）
+   │
+   ├──────────────────────┬─────────────────────────┐
+   ▼                      ▼
+[retrieve_internal]   [retrieve_external]
+ 对每个子问题：         （用户开启联网开关时）
+ Qdrant 混合检索       Tavily Web 搜索
+ dense+sparse→RRF→重排  失败优雅降级为空
+   │                      │
+   └──────────┬───────────┘
+              ▼
+          [fuse]  内外部证据合并 → 对原问题统一重排 → top-k
+              ▼
+          [answer]  只依据资料作答，关键结论标 [编号]，不足如实说明
+              ▼
+          带引用的答案 + 证据来源列表
+```
+
+## 技术栈
+
+- **LLM**：DeepSeek V4 云端 API（`langchain-deepseek` 的 `ChatDeepSeek`），默认 `deepseek-v4-flash`。
+- **向量化 + 重排**：Xinference 上的 BGE（`bge-m3` 向量 + `bge-reranker-v2-m3` 重排，本地 GPU）。
+- **向量库 + 混合检索**：Qdrant（dense 语义 + sparse BM25 → RRF 融合 → BGE 重排）。
+- **外部源**：Tavily Web 搜索（联网补时效/最新指南）。
+- **编排**：LangGraph（StateGraph）。
+- **服务 + 部署**：FastAPI + 原生网页前端 + Docker（compose 编排 app + qdrant）。
 
 ## 目录结构
 
 ```
-learning-assistant/
-├── CLAUDE.md        # 给 Claude Code 的项目上下文，开工前先读
-├── requirements.txt
-├── .env.example
-├── config.py        # 端点 / 模型 / UID（可被 .env 覆盖）
-├── llm.py           # ChatDeepSeek 封装
-├── embeddings.py    # Xinference 向量化 + 重排（REST）
-├── data.py          # HotpotQA 加载
-└── smoke_test.py    # 四条管道 + LangGraph 的冒烟测试
+config.py        端点 / 模型 / UID（.env 覆盖，唯一配置入口）
+_bootstrap.py    放行 OpenMP 重复加载（入口最先 import）
+llm.py           ChatDeepSeek 封装
+embeddings.py    Xinference BGE 向量化 + 重排（/v1/rerank REST）
+sparse.py        FastEmbed BM25 稀疏向量（混合检索的词面路）
+vectordb.py      Qdrant 客户端工厂（本地落盘 / 服务器双模式）
+ingest.py        灌库管道：教材 → 切块 → dense+sparse → 写 Qdrant
+kb_search.py     内部检索：混合召回（dense+sparse RRF）+ BGE 重排
+external.py      Tavily Web 搜索
+med_state.py     图状态 MedState
+med_nodes.py     节点：plan / retrieve_internal / retrieve_external / fuse / answer
+med_graph.py     组装 StateGraph 并 compile
+med_rag.py       CLI 入口：python med_rag.py "问题" [--web]
+server.py        FastAPI 服务：/ /health /chat
+static/index.html 网页前端（带联网开关）
+compare_retrieval.py  混合检索 vs 纯 dense 对比工具
+dedup_kb.py      知识库去重工具
+Dockerfile / docker-compose.yml / .dockerignore   容器化部署
+fastembed_cache/ 内置 BM25 模型缓存（容器离线构建用）
+docs/            设计与部署文档
 ```
 
-## 前置条件
+## 快速开始
 
-1. 去 platform.deepseek.com 申请 API 密钥，填进 `.env` 的 `DEEPSEEK_API_KEY`。
-2. SSH 隧道：本机 `9997` → AutoDL 的 Xinference（LLM 走云端，所以只剩这一条隧道）。
-3. Xinference 已启动 BGE 向量模型与 BGE 重排模型，用 `xinference list` 记下两者的 **model UID**。
+### 前置
+1. `platform.deepseek.com` 申请 API 密钥，填进 `.env` 的 `DEEPSEEK_API_KEY`。
+2. Xinference 启动 `bge-m3`（向量）与 `bge-reranker-v2-m3`（重排），记下 UID 填进 `.env`。
+3. （可选联网）`tavily.com` 申请密钥填 `TAVILY_API_KEY`。
 
-## 运行
-
+### 本地运行
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # 填 DEEPSEEK_API_KEY，并把两个 *_MODEL_UID 改成你实际启动的 UID
-python smoke_test.py
+cp .env.example .env          # 填密钥与模型 UID
+
+python ingest.py --recreate   # 灌库（首次，走 Xinference 向量化）
+python med_rag.py "二甲双胍的副作用和禁忌"          # CLI 问答
+python med_rag.py "高血压一线药的副作用" --web      # 融合联网
+
+uvicorn server:app --reload   # 起 Web 服务 → http://localhost:8000
 ```
 
-## 成功长这样
-
+### Docker 部署
+```bash
+docker compose up -d qdrant            # 1. 起向量库服务器
+export QDRANT_URL=http://localhost:6333 && python ingest.py --recreate  # 2. 灌库
+docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 ```
-[LLM] DeepSeek -> 向量检索是把文本转成向量后按相似度找最接近的内容……
-[EMBED] BGE 维度=1024  前三维=[...]
-[RERANK] 最相关 -> 过拟合指模型在训练集上表现很好但泛化能力差。  分数=0.99xx
-[DATA] HotpotQA 已加载  Q: ...
-        A: ...  context 段数: 10  金标条数: 2
-[GRAPH] LangGraph OK，1+1 -> 2
-```
+详见 `docs/P6_DEPLOY.md`。**本地落盘 → 容器部署只切环境变量 `QDRANT_URL`，零代码改动。**
 
-## 结果表（n=600，本地 Xinference 同后端，deepseek-v4-flash，temp=0）
+## 进度路线（P0 → P6）
 
-> 同一批 600 条 validation、同一本地后端测得，可横向对比。
-> ⚠️ **评测噪声**：DeepSeek 云端 API 即使 `temperature=0` 仍非确定性（MoE 路由 + 服务端 batch）。
-> 实证：M3 与"去 reflect"两组的 comparison 走**字节级相同**的代码路径，结果却差 0.026（≈3 题）。
-> 故噪声带 ≈ **±0.02~0.03（n=114）/ ±0.015（n=486）**，**小于 ~0.03 的差异单次运行不可信**。
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| **P0** | Qdrant 持久向量库 + 医疗 KB 灌库 + 混合检索（dense+sparse+RRF+rerank） | ✅ |
+| **P1** | 医疗 RAG 基线（问诊 → 混合检索 → 带引用作答） | ✅ |
+| **P2** | +Planning（复合问题拆方面 → 分方面检索 → 汇总） | ✅ |
+| **P3** | 知识融合（内部教材 KB + 外部 Tavily Web，带联网开关） | ✅ |
+| **P6** | FastAPI 服务 + 网页前端 + Docker 容器化（已端到端验证） | ✅ |
+| **P4** | +Reflection（答完自判证据充分性，不足换源补检索） | 🚧 待做 |
+| **P5** | +Memory（短期 checkpointer 多轮 + 长期 Store 用户记忆/事实缓存） | 🚧 待做 |
 
-| 配置 | classify | Planning | Reflection | EM | F1 |
-|------|:---:|:---:|:---:|----|----|
-| **M1** 单跳基线 | ✗ | ✗ | ✗ | **0.5783** | 0.7153 |
-| └─ bridge (n=486) | | | | 0.5720 | 0.7165 |
-| └─ comparison (n=114) | | | | 0.6053 | 0.7105 |
-| **M2-refine** 链式精化 | ✗ | ✓ | ✗ | **0.5900** | 0.7336 |
-| └─ bridge (n=486) | | | | 0.6029 | 0.7503 |
-| └─ comparison (n=114) | | | | 0.5351 | 0.6625 |
-| **M3** +Reflection | ✓ | ✓ | ✓ | **0.5883** | 0.7257 |
-| └─ bridge (n=483) | | | | 0.5942 | 0.7351 |
-| └─ comparison (n=114) | | | | 0.5789 | 0.7049 |
-| **M3 消融**：去 reflect | ✓ | ✓ | ✗ | 0.5733 | 0.7121 |
-| └─ bridge (n=486) | | | | 0.5658 | 0.7093 |
-| └─ comparison (n=114) | | | | 0.6053 | 0.7239 |
-| **M4** +Memory | | | | 待填 | 待填 |
+## 评测
 
-> 早期 n=200（旧 SSH 后端）的 M2-static 实验见下方「M2 消融分析」，后端/样本量不同，仅作定性参考。
+医疗答复是开放长文本，EM/F1 基本失效。采用：**检索 recall@k**（金标 chunk 是否被召回）+
+**LLM-as-judge** 评答案质量。详见 `docs/P1_DESIGN.md`、`docs/HYBRID_RETRIEVAL_EVIDENCE.md`。
 
-### 逐层拆解（每次只动一个变量）
+## 文档
 
-| 改动 | bridge | comparison | total | 解读 |
-|------|--------|------------|-------|------|
-| **+Planning**（M1→M2） | **+0.031** | **−0.070** | +0.012 | 多跳拆解抬 bridge；但拆解 comparison 反伤 |
-| **+classify**（M2→M3去reflect） | −0.037 | **+0.070** | −0.017 | 路由救回 comparison；~4% bridge 误判被踢出 planning，反伤 |
-| **+reflect**（M3去reflect→M3） | +0.028 | −0.026* | +0.015 | reflect 补回 bridge（*comparison 路径相同，此差为噪声） |
-
-可信度分级：
-- ✅ **铁证（远超噪声）**：拆解 comparison 反伤（−0.070）、classify 救回 comparison（+0.070）。
-- ⚠️ **大概率真（略超噪声 + 有机制解释）**：Planning 抬 bridge（+0.031）、classify 误判伤 bridge（−0.037）。
-- ❓ **噪声边缘（单次不下定论）**：reflect 抬 bridge（+0.028）。需多种子去噪才能钉死。
-
-## M2 消融分析
-
-### 静态子问题（M2-static）为何未能超越 M1
-
-planner 一次性生成所有子问题，子问题之间没有依赖关系：
-
-```
-SubQ1: "Who portrayed Corliss Archer in Kiss and Tell?"
-SubQ2: "What government position was held by the actress who played Corliss Archer?"  ← 仍是泛指
-```
-
-retrieve 只是换了查询词，证据池还是同样的 10 段文档，SubQ2 没有用 SubQ1 检索出的答案来精化查询，导致结果与 M1 持平。comparison 子集下跌明显（-0.18 EM），因为 M1 一次喂入所有上下文更利于跨实体对比。
-
-### 链式精化（M2-refine）的改进
-
-在 retrieve 和下一轮 retrieve 之间插入 refine 节点，提取上一跳的中间答案并代入下一个子问题：
-
-```
-SubQ1 检索 → refine 提取中间答案 "Shirley Temple"
-→ SubQ2 精化为 "What government position did Shirley Temple hold?"
-→ 再检索 → 答案更精准
-```
-
-## M3 消融分析（+Reflection / +classify）
-
-M3 在 M2-refine 上加了两样东西：**classify 分流**（comparison 走 M1 短路径、bridge 走完整链）和 **Reflexion 反思回路**（答完自判证据是否充分，不够则重检索，上限 `MAX_REVISIONS=3`）。n=600 同后端消融结论：
-
-### classify：修复 comparison 的双刃剑
-
-M2-refine 把 comparison 也硬拆成子问题，跨实体对比被打散，comparison 暴跌（0.6053→0.5351，−0.070）。classify 用一个轻量分类节点（实测准确率 96%）把 comparison 路由回 M1 式一次性作答路径，**救回 +0.070**。代价：~4% 的 bridge 被误判成 comparison、踢出 planning 路径，**反伤 bridge −0.037**。净效果在 total 上接近持平。
-
-### Reflection：边缘正贡献，但烧检索预算
-
-固定 classify，只切 reflect 开关：bridge 0.5658（去 reflect）→ 0.5942（开 reflect），**+0.028**。方向为正，但**卡在噪声带边缘**（n=486 噪声 ≈±0.015，此差仅约 2 倍噪声），且 `avg_revisions=0.83` 意味着平均每题多烧 0.83 次检索。**这是"准确率换效率"的权衡，单次运行不足以下定论**——要钉死需多种子取均值。
-
-> 注：早期在 n=200 噪声下曾误判"reflect 是纯负担"，n=600 推翻了该结论。这本身是教训——**小样本 + 云端 LLM 非确定性下，细微 EM 差异不可信**。
-
-### 方法论：云端 LLM 的评测噪声
-
-最关键的发现：`temperature=0` 下，M3 与"去 reflect"两组的 **comparison 走字节级相同的代码路径**，EM 却差 0.026（≈3 题）。说明 DeepSeek 云端 API 即使贪心解码也非确定性。**所有 <0.03 的单次 EM 差异都落在噪声里**，做消融时只能对大效应（拆解 comparison ±0.07 这类）下硬结论。
-
-## 当前最优配置
-
-n=600 total EM：M2-refine（0.5900）≈ M3（0.5883）> M1（0.5783）> M3-去reflect（0.5733）。**M2-refine 与 M3 在噪声内打平**，没有单一配置全面占优——这是 bridge↔comparison 的权衡前沿，而非单调增量。诚实结论：**Planning 是确凿赢家（抬多跳），classify 是对 comparison 回归的有效工程修复，Reflection 收益在噪声边缘。**
-
-## 下一步（M4：+Memory）
-
-见 `M3_STRUCTURE.md` 与设计讨论：HotpotQA 单轮独立问答对记忆不友好，M4 需为 Memory 配"对的尺子"（多轮指代消解 / 跨会话事实召回），而非硬套 HotpotQA EM/F1。
+- `docs/INTERVIEW.md` — 面试速查（Agent 概念 + 项目解读 + Docker 部署）
+- `docs/P0_WALKTHROUGH.md` — 灌库与 Qdrant 操作走查
+- `docs/P1_DESIGN.md` / `docs/P2_5_DESIGN.md` — 基线与多跳设计
+- `docs/HYBRID_RETRIEVAL_EVIDENCE.md` — 混合检索实证
+- `docs/P6_DEPLOY.md` — Docker 部署详解

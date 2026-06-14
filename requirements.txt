@@ -9,7 +9,6 @@ xinference_client
 qdrant-client>=1.12
 fastembed>=0.4
 tavily-python>=0.5
-datasets>=3.0
 requests
 python-dotenv
 tqdm

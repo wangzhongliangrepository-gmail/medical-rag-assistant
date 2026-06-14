@@ -18,65 +18,62 @@
 
 > 一句话：**Agent = LLM（大脑）+ 工具（手脚）+ 记忆（上下文）+ 循环（反思纠错）**。
 
-## 1.2 Agent 四大支柱（项目主线）
+## 1.2 Agent 四大支柱（对应本医疗助手）
 
-| 支柱 | 是什么 | 本项目实现 |
+| 支柱 | 是什么 | 本项目状态 |
 |------|--------|-----------|
-| **Planning** | 把复杂任务拆成子步骤 | `med_nodes.py` 的 `plan` 节点拆 1-3 子问题；HotpotQA 线 plan-and-execute 多跳 |
-| **Tool Use** | 调外部工具获取没有的能力/信息 | 混合检索(Qdrant dense+sparse+rerank) + Tavily Web 搜索 |
-| **Memory** | 跨步骤/会话保留上下文与经验 | 短期 state+checkpointer；长期跨线程 Store(事实缓存+经验库) |
-| **Reflection** | 自我批判、判断够不够、不够重来 | Reflexion 回路；`MAX_REVISIONS=3` 是修订次数上限(防死循环) |
+| **Planning** | 把复杂问题拆成子步骤 | ✅ `med_nodes.py` 的 `plan` 节点把复合问诊拆成 1-3 个方面（机理/用药/副作用…）分别检索 |
+| **Tool Use** | 调外部工具获取自身没有的信息 | ✅ 混合检索(Qdrant dense+sparse+RRF+rerank) + Tavily 联网搜索，两路证据 `fuse` 融合 |
+| **Reflection** | 自我批判、判断证据够不够、不够重来 | 🚧 路线图 P4（Reflexion 回路：答完自判证据充分性，不足换源补检索，带修订上限） |
+| **Memory** | 跨轮/跨会话保留上下文与经验 | 🚧 路线图 P5（短期 checkpointer 多轮对话 + 长期 Store 记用户过敏史/慢病 + 事实缓存） |
+
+> 当前医疗助手已落地 **Planning + Tool Use + 知识融合**；Reflection / Memory 是规划中的
+> 下两个支柱（见 README 路线图）。
 
 ## 1.3 主流 Agent 范式
 
 - **ReAct**：Thought→Action→Observation 循环。灵活但慢、贵、易跑偏。
-- **Plan-and-Execute**（本项目 Planning）：先一次性规划再执行，可控、调用少。
-  - 真实坑：M2 静态拆解子问题无依赖、效果没超基线 → 改为**链式精化(refine)**：
-    提取上一跳答案代入下一个子问题。
-- **Reflexion**（本项目 Reflection）：执行后自我反思→发现不足→带教训重试，上限 `MAX_REVISIONS`。
+- **Plan-and-Execute**（本项目 Planning 用的）：先一次性规划再执行，可控、调用少。
+  本项目是**平行拆解**——把问诊拆成互相独立的方面同时检索。
+- **Reflexion**（路线图 P4）：执行后自我反思→发现证据不足→换源/补检索重试，带修订次数上限防死循环。
 
 ## 1.4 LangGraph 概念
 
 | 概念 | 是什么 | 本项目对应 |
 |------|--------|-----------|
 | State | 节点间流动的共享数据 | `MedState` TypedDict |
-| Node | 读 state 改 state 的函数 | plan/retrieve/fuse/answer |
+| Node | 读 state 改 state 的函数 | plan / retrieve_internal / retrieve_external / fuse / answer |
 | Edge | 节点连接 | `add_edge("plan","retrieve_internal")` |
-| Conditional Edge | 按 state 决定走向 | 反思回路：够了→finalize/不够→planner |
-| Checkpointer | 持久化 state(短期记忆) | 线程内对话状态 |
-| Store | 跨线程长期记忆 | 事实缓存 + 经验库 |
+| Conditional Edge | 按 state 决定走向 | 路线图：reflect 判断够→结束/不够→补检索 |
+| Checkpointer | 持久化 state(短期记忆) | 路线图 P5：会话内多轮上下文 |
+| Store | 跨线程长期记忆 | 路线图 P5：用户记忆 + 事实缓存（BGE 语义检索） |
 
 > 为什么用 LangGraph 不用 if/else 串函数？→ 把 Agent 建模成图，条件边天然支持
-> 「反思回路」这种循环，自带状态管理、可视化、LangSmith 追踪。
+> 「反思回路」这种循环，自带状态管理、可视化、LangSmith 追踪，为后续加 Reflection/Memory 留扩展点。
 
 ## 1.5 Agent 面试问答
 
 **概念**
-1. Agent vs 普通 RAG？→ 普通 RAG 是「检索一次→作答」固定流程；Agent 能规划多步、自决检索次数、反思重试。
-2. Agent vs Workflow？→ Workflow 是人预编排固定路径；Agent 让 LLM 自主决策路径；实践常混合。
-3. ReAct vs Plan-and-Execute？→ ReAct 边想边做灵活但慢；P&E 先规划后执行可控但不灵活。
+1. Agent vs 普通 RAG？→ 普通 RAG 是「检索一次→作答」固定流程；Agent 能先规划多步、调多个工具、（加上反思后）自判够不够再重试。
+2. Agent vs Workflow？→ Workflow 是人预编排固定路径；Agent 让 LLM 自主决策路径；实践常混合（本项目偏「LLM 决策 + 图约束」）。
+3. ReAct vs Plan-and-Execute？→ ReAct 边想边做灵活但慢；P&E 先规划后执行可控但不灵活。本项目用 P&E 做平行拆解。
 
 **工具调用**
-4. Function Calling 怎么工作？→ LLM 输出结构化工具调用意图(JSON)，框架执行，结果回喂 LLM。用 `with_structured_output`。
-5. 工具失败怎么办？→ Tavily try/except 优雅降级。
+4. Function Calling 怎么工作？→ LLM 输出结构化工具调用意图(JSON)，框架执行，结果回喂 LLM。本项目 plan 用 `with_structured_output(method="json_mode")`。
+5. 工具失败怎么办？→ Tavily try/except 优雅降级，仅用内部源不崩。
 6. 怎么防乱调工具/幻觉参数？→ 结构化输出约束 schema + 严格 prompt。
 
 **规划**
-7. 怎么拆解复杂问题？→ planner 拆子问题；注意子问题依赖(refine 链式精化)。
-8. 拆解一定更好吗？→ 不一定！拆解 comparison 类反而 -0.07(打散跨实体对比)，故加 classify 分流。
+7. 怎么拆解复杂问题？→ plan 节点把复合问诊拆成 1-3 个方面；单一问题就只输出原问题。
+8. 拆解一定更好吗？→ 不一定！平行拆解适合「多方面」问题；桥接型（后一跳依赖前一跳答案）需链式精化，否则悬空子问题检索全是噪声（见 `P2_5_DESIGN.md`）。
 
-**反思**
-9. Reflection 怎么实现？→ reflect 节点自判证据充分性，条件边决定重试/结束。
-10. 怎么不死循环？→ `MAX_REVISIONS` 上限(3)。
-11. 反思值得吗？→ 实测在噪声边缘(+0.028)，且每题多烧 0.83 次检索——准确率换效率的权衡。
+**反思 / 记忆（路线图）**
+9. Reflection 打算怎么实现？→ answer 后加 reflect 节点自判证据充分性，不足则换源补检索，条件边回检索，带修订上限防死循环。
+10. Memory 打算怎么做？→ 短期：checkpointer + thread_id 撑会话内多轮（指代消解「它的禁忌呢」）；长期：Store 记用户过敏史/慢病，作答时语义召回注入做个性化 + 安全提示。
 
-**记忆**
-12. 短期 vs 长期记忆？→ 短期=线程内 state(一次对话)；长期=跨会话 Store(事实缓存避免重复检索+经验库积累教训)。
-13. 长期记忆怎么检索？→ 带 BGE 语义检索的 Store，按相关度召回历史经验。
-
-**评估（强项）**
-14. 怎么证明 Agent 更好？→ 客观指标+消融：每加一支柱报 EM/F1 增量，做去支柱对照。
-15. 评测的坑？→ DeepSeek 即使 temp=0 也非确定性(MoE 路由)，噪声带 ±0.02~0.03，小差异不可信。
+**评估**
+11. 医疗答案怎么评估？→ 开放长文本 EM 失效，用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量（见 `P1_DESIGN.md`）。
+12. 怎么防幻觉？→ 结构化输出 + 严格 prompt（只依据资料、不编造、不足说不足、冲突指出）+ 强制 `[编号]` 引用可溯源。
 
 ---
 
@@ -283,10 +280,10 @@ docker compose up -d --build app             # 3. 构建并起 app
 # 附：两条一句话总结（面试开场可用）
 
 **Agent 能力**：
-> 我落地了 Agent 四大支柱：Planning 用 plan-and-execute 拆子问题并链式精化，Tool
-> Use 是混合检索+联网搜索，Reflection 是带修订上限的 Reflexion 回路，Memory 分短期
-> checkpointer 和长期语义 Store。用 LangGraph 状态图+条件边编排，并用 HotpotQA 的
-> EM/F1 做逐支柱消融，定量说清每个支柱的真实增量。
+> 我用 LangGraph 在医疗助手上落地了 Agent 支柱：Planning 用 plan-and-execute 把复合
+> 问诊平行拆成多方面，Tool Use 是 Qdrant 混合检索 + Tavily 联网两路工具、再 fuse 融合，
+> 作答严格防幻觉、带引用可溯源。状态图 + 条件边的编排为后续 Reflection（证据自检补
+> 检索）和 Memory（多轮 checkpointer + 长期用户记忆 Store）留好了扩展点。
 
 **医疗 RAG 项目**：
 > 内外部知识融合的医疗 RAG：内部 Qdrant 做 dense+sparse 混合检索加 BGE 重排，外部
