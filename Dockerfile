@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 预置 FastEmbed 的 BM25 模型缓存（容器内无法联网下载 HuggingFace；
+# /tmp/fastembed_cache 是 fastembed 在 Linux 下的默认缓存目录）
+COPY fastembed_cache /tmp/fastembed_cache
+
 COPY . .
 
 # 放行 torch/onnxruntime 的 OpenMP 重复加载；无缓冲日志

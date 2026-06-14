@@ -67,7 +67,24 @@ docker compose up -d --build app
 - qdrant 可换成 Qdrant Cloud（托管），只改 `QDRANT_URL`。
 - Xinference 可部署到带 GPU 的云实例，或换用云端 embedding/rerank 服务。
 
+## 部署实测踩的坑（已修）
+
+实际在 Docker Desktop 上跑通时遇到两个问题，均已修复：
+
+1. **`langchain-community>=1.0` 找不到版本**：该子包最高只到 0.4.2，没跟着 langchain
+   升到 1.x。`requirements.txt` 里跨包统一写 `>=1.0` 不可靠（子包版本节奏不同步），
+   已改为 `langchain-community>=0.4`。
+2. **FastEmbed 的 BM25 模型容器内无法联网下载**（`Could not load model Qdrant/bm25
+   from any source`）：fastembed 首次用 BM25 要从 HuggingFace 下载，容器内访问失败。
+   解法：把宿主机已缓存的模型（约 90K）打进镜像——`COPY fastembed_cache
+   /tmp/fastembed_cache`（`/tmp/fastembed_cache` 是 fastembed 在 Linux 下默认缓存目录），
+   运行时零下载。
+   - 教训："运行时下载模型"是离线/受限网络部署的常见暗坑，要把模型预置进镜像；
+     这与"Xinference 留宿主机"是同一类"外部依赖如何进容器"的权衡。
+
 ## 现状
 
-Dockerfile / compose / dockerignore 已就绪。本机未装 Docker，**未实测**；装好
-Docker Desktop 后按上方步骤即可一键起栈。代码已做"本地/服务器双模式"适配，迁移无需改码。
+**已在 Docker Desktop 上端到端验证通过**（2026-06）：qdrant 容器灌入 54759 向量，
+app 容器经 `host.docker.internal:9997` 连宿主机 Xinference 做 dense 向量化 + 重排、
+BM25 走镜像内置缓存，`POST /chat` 返回带 `[编号]` 引用的医疗答案（HTTP 200，约 10s）。
+代码已做"本地/服务器双模式"适配，迁移无需改码。
