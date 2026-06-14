@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>医疗知识助手</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      max-width: 820px; margin: 0 auto; padding: 24px;
+      background: #f5f7fa; color: #1a2b3c;
+    }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: #6b7a8d; font-size: 13px; margin-bottom: 20px; }
+    .input-row { display: flex; gap: 8px; align-items: stretch; }
+    #q {
+      flex: 1; padding: 12px 14px; font-size: 15px;
+      border: 1px solid #cfd8e3; border-radius: 8px; outline: none;
+    }
+    #q:focus { border-color: #2b7de9; }
+    button {
+      padding: 0 20px; font-size: 15px; background: #2b7de9; color: #fff;
+      border: none; border-radius: 8px; cursor: pointer;
+    }
+    button:disabled { background: #9bb8e0; cursor: not-allowed; }
+    .toggle-row { margin: 12px 0 4px; font-size: 14px; color: #34465c; display: flex; align-items: center; gap: 8px; }
+    .toggle-row input { width: 16px; height: 16px; }
+    .hint { color: #8a97a8; font-size: 12px; }
+    #out { margin-top: 22px; }
+    .mode { font-size: 12px; color: #6b7a8d; margin-bottom: 8px; }
+    .card { background: #fff; border: 1px solid #e3e9f0; border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+    .plan { font-size: 13px; color: #46586d; }
+    .plan li { margin: 2px 0; }
+    .answer { white-space: pre-wrap; line-height: 1.7; font-size: 15px; }
+    .answer strong { color: #11233a; }
+    .src-title { font-size: 13px; font-weight: 600; color: #46586d; margin: 6px 0 8px; }
+    .src { font-size: 13px; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; background: #f7f9fc; }
+    .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-right: 6px; color: #fff; }
+    .tag-in { background: #2b7de9; }
+    .tag-ex { background: #1aa86a; }
+    .src-text { color: #5a6b7e; margin-top: 4px; }
+    .disclaimer { color: #b06b00; font-size: 12px; margin-top: 18px; }
+    .loading { color: #6b7a8d; }
+  </style>
+</head>
+<body>
+  <h1>🩺 医疗知识助手</h1>
+  <div class="sub">混合检索（语义+词面）+ 知识融合（内部教材 + 联网 Web）的医疗 RAG</div>
+
+  <div class="input-row">
+    <input id="q" placeholder="输入医疗问题，例如：二甲双胍的副作用和禁忌" />
+    <button id="ask" onclick="ask()">提问</button>
+  </div>
+  <label class="toggle-row">
+    <input type="checkbox" id="web" />
+    🌐 联网搜索（融合外部 Web，查最新进展时用；关闭则仅查内部教材，更快）
+  </label>
+
+  <div id="out"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function esc(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    // 极简 markdown：**粗体** + 换行
+    function md(s) {
+      return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    }
+
+    async function ask() {
+      const q = $("q").value.trim();
+      if (!q) return;
+      const useWeb = $("web").checked;
+      $("ask").disabled = true;
+      $("out").innerHTML = '<div class="loading">检索中…' + (useWeb ? '（含联网，稍慢）' : '') + '</div>';
+      try {
+        const resp = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: q, use_external: useWeb }),
+        });
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const d = await resp.json();
+        render(q, d, useWeb);
+      } catch (e) {
+        $("out").innerHTML = '<div class="card" style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
+      } finally {
+        $("ask").disabled = false;
+      }
+    }
+
+    function render(q, d, useWeb) {
+      let html = '';
+      html += '<div class="mode">模式：' + (useWeb ? '内部教材 + 联网 Web' : '仅内部教材')
+            + ' ｜ 内部 ' + d.n_internal + ' 段，外部 ' + d.n_external + ' 条 → 重排取 ' + d.evidence.length + '</div>';
+
+      if (d.sub_questions && d.sub_questions.length) {
+        html += '<div class="card plan"><b>规划子问题</b><ul>'
+              + d.sub_questions.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul></div>';
+      }
+
+      html += '<div class="card"><div class="answer">' + md(d.answer) + '</div></div>';
+
+      if (d.evidence && d.evidence.length) {
+        html += '<div class="card"><div class="src-title">来源</div>';
+        d.evidence.forEach((e, i) => {
+          const isExt = e.source.startsWith("外部");
+          const tag = isExt ? '<span class="tag tag-ex">外部</span>' : '<span class="tag tag-in">内部</span>';
+          const name = e.source.replace(/^内部·|^外部·/, "");
+          html += '<div class="src">' + tag + '[' + (i + 1) + '] ' + esc(name) + ' (score ' + e.score + ')'
+                + '<div class="src-text">' + esc(e.text) + '…</div></div>';
+        });
+        html += '</div>';
+      }
+
+      html += '<div class="disclaimer">⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。</div>';
+      $("out").innerHTML = html;
+    }
+
+    $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+  </script>
+</body>
+</html>
