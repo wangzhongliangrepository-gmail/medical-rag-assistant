@@ -20,3 +20,8 @@ class MedState(TypedDict):
     external_evidence: list[dict]    # 外部源（Tavily Web）证据
     evidence: list[dict]             # 融合重排后的证据 [{text, source, score}]
     answer: str
+
+    # --- 反思（P4，反思回路）---
+    revisions: int                   # 已反思次数，硬上限 MAX_REVISIONS
+    reflection: str                  # 最近一次反思理由
+    missing_info: str                # 反思指出缺少的补充检索查询（空=证据充分）

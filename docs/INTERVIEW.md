@@ -24,18 +24,17 @@
 |------|--------|-----------|
 | **Planning** | 把复杂问题拆成子步骤 | ✅ `med_nodes.py` 的 `plan` 节点把复合问诊拆成 1-3 个方面（机理/用药/副作用…）分别检索 |
 | **Tool Use** | 调外部工具获取自身没有的信息 | ✅ 混合检索(Qdrant dense+sparse+RRF+rerank) + Tavily 联网搜索，两路证据 `fuse` 融合 |
+| **Reflection** | 自我批判、判断证据够不够、不够重来 | ✅ `reflect` 节点答完自判证据是否充分，不足则用具体缺失查询 `augment_retrieve` 补检索（累积证据）→ 重答，`MAX_REVISIONS=2` 防死循环 |
 | **Memory** | 跨轮/跨会话保留上下文与经验 | ✅ 短期 `InMemorySaver`（会话内多轮，`contextualize` 指代消解）+ 长期 `InMemoryStore`（BGE 语义检索，按 user_id 记过敏史/慢病，`recall_memory` 召回 + `extract_memory` 自动抽取，作答做安全提示） |
-| **Reflection** | 自我批判、判断证据够不够、不够重来 | 🚧 路线图 P4（Reflexion 回路：答完自判证据充分性，不足换源补检索，带修订上限） |
 
-> 当前医疗助手已落地 **Planning + Tool Use + 知识融合 + Memory**；Reflection 是规划中的
-> 下一个支柱（见 README 路线图）。
+> 医疗助手已落地 **四大支柱全部**：Planning + Tool Use（含知识融合）+ Reflection + Memory。
 
 ## 1.3 主流 Agent 范式
 
 - **ReAct**：Thought→Action→Observation 循环。灵活但慢、贵、易跑偏。
 - **Plan-and-Execute**（本项目 Planning 用的）：先一次性规划再执行，可控、调用少。
   本项目是**平行拆解**——把问诊拆成互相独立的方面同时检索。
-- **Reflexion**（路线图 P4）：执行后自我反思→发现证据不足→换源/补检索重试，带修订次数上限防死循环。
+- **Reflexion**（本项目 Reflection 用的）：执行后自我反思→发现证据不足→用具体缺失查询补检索重答，带修订次数上限防死循环。
 
 ## 1.4 LangGraph 概念
 
@@ -44,7 +43,7 @@
 | State | 节点间流动的共享数据 | `MedState` TypedDict |
 | Node | 读 state 改 state 的函数 | contextualize / recall_memory / plan / retrieve_* / fuse / answer / extract_memory |
 | Edge | 节点连接 | `add_edge("plan","retrieve_internal")` |
-| Conditional Edge | 按 state 决定走向 | 路线图：reflect 判断够→结束/不够→补检索 |
+| Conditional Edge | 按 state 决定走向 | ✅ reflect 后：充分/达上限→收尾 / 不足→augment_retrieve 补检索 |
 | Checkpointer | 持久化 state(短期记忆) | ✅ `InMemorySaver`，按 thread_id 撑会话内多轮（history reducer 累积） |
 | Store | 跨线程长期记忆 | ✅ `InMemoryStore`（BGE 语义检索），按 user_id 记用户健康事实 |
 
@@ -73,8 +72,11 @@
 11. 长期记忆怎么写、怎么读？→ 写：`extract_memory` 用结构化输出自动抽取用户明确陈述的过敏/慢病/用药，`store.put`；读：`recall_memory` 用 `store.search(query=)` BGE 语义召回，注入作答 prompt 做安全提示。
 12. 记忆怎么不误抽 / 不串用户？→ 抽取 prompt 严格限「只记明确陈述、没有返回空」；user_id 做 namespace 隔离；抽取失败 try/except 不影响作答。
 
-**反思（路线图 P4）**
-13. Reflection 打算怎么实现？→ answer 后加 reflect 节点自判证据充分性，不足则换源补检索，条件边回检索，带修订上限防死循环。
+**反思（已实现 P4）**
+13. Reflection 怎么实现？→ answer 后 reflect 节点自判证据能否支撑安全完整回答，不足则给出具体缺失查询，augment_retrieve 补检索→fuse→重答，条件边控制回路。
+14. 怎么不死循环？→ `MAX_REVISIONS=2` 硬上限 + reflect prompt 克制（只在缺关键信息时判不足，不因「可更详尽」就重试）。
+15. 补检索的证据会覆盖原来的吗？→ 不会，augment_retrieve 按 text 去重**追加**到证据池，fuse 每轮对全部证据重排，保证累积。
+16. 怎么证明反思在起作用？→ 实测「二甲双胍的副作用、禁忌、漏服处理」→ reflect 识别出「漏服处理缺失」→ 补检索→证据增至 10 条→答案补全，revisions=2。
 
 **评估**
 11. 医疗答案怎么评估？→ 开放长文本 EM 失效，用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量（见 `P1_DESIGN.md`）。
@@ -285,11 +287,11 @@ docker compose up -d --build app             # 3. 构建并起 app
 # 附：两条一句话总结（面试开场可用）
 
 **Agent 能力**：
-> 我用 LangGraph 在医疗助手上落地了 Agent 支柱：Planning 用 plan-and-execute 把复合
+> 我用 LangGraph 在医疗助手上落地了 Agent **四大支柱**：Planning 用 plan-and-execute 把复合
 > 问诊平行拆成多方面，Tool Use 是 Qdrant 混合检索 + Tavily 联网两路工具、再 fuse 融合，
+> Reflection 用 reflect 节点答完自判证据是否充分、不足则补检索重答（带修订上限防死循环），
 > Memory 用 checkpointer 撑会话内多轮指代消解、用带 BGE 语义检索的 Store 跨会话记住用户
-> 过敏史/慢病并在作答时做安全提示。作答严格防幻觉、带引用可溯源；Reflection（证据自检
-> 补检索）是规划中的下一支柱。
+> 过敏史/慢病并在作答时做安全提示。全程严格防幻觉、带引用可溯源。
 
 **医疗 RAG 项目**：
 > 内外部知识融合的医疗 RAG：内部 Qdrant 做 dense+sparse 混合检索加 BGE 重排，外部

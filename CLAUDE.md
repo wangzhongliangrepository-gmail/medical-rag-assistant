@@ -23,7 +23,9 @@ question → contextualize(用 history 指代消解 → standalone_question)   [
                → retrieve_external(Tavily Web，用户开关 use_external)
                → fuse(合并去重 → 统一重排 top-k)
                → answer(结合用户背景 + 证据，带 [编号] 引用，安全提示)
-               → extract_memory(抽取本轮健康事实写回 Store)           [长期记忆·写] → END
+               → reflect(证据够不够?)                                  [反思]
+                   ├─ 不足 → augment_retrieve(用缺失查询补检索) → fuse → answer（≤MAX_REVISIONS）
+                   └─ 充分/达上限 → extract_memory(抽取健康事实写回)    [长期记忆·写] → END
 ```
 
 记忆挂载（`med_graph.py`）：`compile(checkpointer=InMemorySaver(), store=InMemoryStore(index=BGE))`；
@@ -38,7 +40,9 @@ invoke 传 `config={"configurable": {"thread_id": session_id, "user_id": user_id
   `contextualize` 节点做指代消解；长期 `InMemoryStore`（BGE 语义检索，按 user_id namespace），
   `recall_memory` 召回 + `extract_memory` 自动抽取用户过敏史/慢病/用药，作答时注入做安全提示。
   内存版重启清空（生产可换 SqliteSaver + Qdrant-backed Store）。
-- **Reflection（路线图 P4）**：answer 后加 `reflect` 自判证据是否充分，不足则换源补检索，带修订上限。
+- **Reflection（已实现 P4）**：`reflect` 节点 answer 后自判证据能否支撑安全完整的回答，不足则用
+  具体 `missing_info` 经 `augment_retrieve` 补检索（追加去重累积证据）→ fuse → answer 重答；
+  `MAX_REVISIONS=2` 硬上限防死循环。`get_med_graph(use_reflect=False)` 可关作对照。
 
 ## 技术栈与硬约束
 

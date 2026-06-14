@@ -50,6 +50,7 @@ class ChatResponse(BaseModel):
     evidence: list[EvidenceItem]
     n_internal: int
     n_external: int
+    revisions: int                         # 反思轮数（>1 表示触发了补检索重答）
 
 
 @app.get("/health")
@@ -80,6 +81,7 @@ def chat(req: ChatRequest):
         ],
         n_internal=len(result.get("internal_evidence", [])),
         n_external=len(result.get("external_evidence", [])),
+        revisions=result.get("revisions", 0),
     )
 
 

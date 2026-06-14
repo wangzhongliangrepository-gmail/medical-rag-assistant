@@ -53,3 +53,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
 MEMORY_NAMESPACE = os.getenv("MEMORY_NAMESPACE", "memories")  # 长期记忆 Store 的 namespace 前缀
 MEMORY_RECALL_K = int(os.getenv("MEMORY_RECALL_K", "3"))      # 每轮从长期记忆语义召回条数
 HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "4"))        # 指代消解参考的最近对话轮数
+
+# --- 反思（P4）---
+# answer 后自判证据是否充分，不足则补检索重答；硬上限防死循环（医疗克制，最多补检索 1 次）。
+MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "2"))

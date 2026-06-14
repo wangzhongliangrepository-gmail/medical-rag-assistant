@@ -207,6 +207,97 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
     ]}
 
 
+# ---------- 反思：自判证据是否充分（P4 反思回路）----------
+
+_REFLECT_PROMPT = """你是严格的医疗质检员。判断「当前资料」能否支撑对问题的**安全、完整**的回答。
+
+问题：{question}
+
+当前资料：
+{context}
+
+当前答案：{answer}
+
+判断规则：
+- sufficient=true：资料已覆盖问题的关键方面，答案基本可信、无明显遗漏关键安全信息。
+- sufficient=false：资料缺少回答所必需的某个关键方面（如只讲了副作用却没有禁忌/相互作用），
+  或缺少与用户健康背景相关的安全信息。
+
+【重要】不要因为「还能更详尽」就判 false；只有缺少**关键**信息时才判 false。
+若 sufficient=false，missing 必须是一个**具体的补充检索查询**（含药名/方面），
+不能是对原问题的复述。示例：✓「二甲双胍的禁忌症和用药注意」 ✗「还有什么要补充的」
+
+输出 JSON：{{"sufficient": true/false, "reasoning": "一句话理由", "missing": "（不足时必填）具体补充检索查询"}}"""
+
+
+class ReflectResult(BaseModel):
+    sufficient: bool
+    reasoning: str
+    missing: str = ""
+
+
+def reflect(state: MedState, config: RunnableConfig) -> dict:
+    """答完自判证据是否充分；不足则给出具体补充检索查询。"""
+    question = state.get("standalone_question") or state["question"]
+    ev = state.get("evidence") or []
+    context = "\n\n".join(f"[{i + 1}]（{e['source']}）{e['text']}" for i, e in enumerate(ev)) or "（无）"
+    structured = _llm(config).with_structured_output(ReflectResult, method="json_mode")
+    try:
+        result = structured.invoke([
+            ("system", '你是医疗质检员，只输出合法 JSON，格式：{"sufficient": bool, "reasoning": "...", "missing": "..."}'),
+            ("human", _REFLECT_PROMPT.format(question=question, context=context, answer=state["answer"])),
+        ])
+    except Exception as e:
+        print(f"[warn] 反思失败，视为充分：{type(e).__name__}: {e}")
+        return {"revisions": state.get("revisions", 0) + 1, "reflection": "反思异常", "missing_info": ""}
+    return {
+        "revisions": state.get("revisions", 0) + 1,
+        "reflection": result.reasoning,
+        "missing_info": "" if result.sufficient else (result.missing or "").strip(),
+    }
+
+
+def route_after_reflect(state: MedState) -> str:
+    """充分或达上限 → 收尾；否则 → 补检索重答。"""
+    from config import MAX_REVISIONS
+    if not state.get("missing_info"):
+        return "extract_memory"
+    if state.get("revisions", 0) >= MAX_REVISIONS:
+        return "extract_memory"
+    return "augment_retrieve"
+
+
+def augment_retrieve(state: MedState) -> dict:
+    """用反思给出的 missing_info 补检索，结果追加到证据池（去重累积，不覆盖）。"""
+    miss = state["missing_info"]
+
+    # 内部库补检索，按 text 去重追加
+    internal = list(state.get("internal_evidence") or [])
+    seen_int = {e["text"] for e in internal}
+    for e in search(miss, top_k=RERANK_TOP_K):
+        if e["text"] not in seen_int:
+            seen_int.add(e["text"])
+            internal.append({"text": e["text"], "source": f"内部·教材#{e['source_id']}"})
+
+    out = {"internal_evidence": internal}
+
+    # 若本轮开了联网，外部也补一路
+    if state.get("use_external"):
+        external = list(state.get("external_evidence") or [])
+        seen_ext = {e["text"] for e in external}
+        try:
+            for h in web_search(miss):
+                t = h["text"][:800]
+                if t and t not in seen_ext:
+                    seen_ext.add(t)
+                    external.append({"text": t, "source": f"外部·{h['title']}（{h['url']}）"})
+        except Exception as e:
+            print(f"[warn] 反思补检索外部失败，仅补内部：{type(e).__name__}: {e}")
+        out["external_evidence"] = external
+
+    return out
+
+
 # ---------- 长期记忆：自动抽取写回 ----------
 
 _EXTRACT_PROMPT = """从用户这句话里抽取**值得长期记住的健康事实**，只抽取用户**明确陈述**的：

@@ -23,6 +23,9 @@ def _print_result(question: str, result: dict, show_sources: bool = True) -> Non
     mem = result.get("user_memory") or []
     if mem:
         print(f"  （已纳入用户记忆：{'；'.join(mem)}）")
+    rev = result.get("revisions", 0)
+    if rev > 1:
+        print(f"  （🔁 经过 {rev} 轮证据反思核验，补检索后重答；最近反思：{result.get('reflection', '')}）")
     print(f"\nA: {result['answer']}\n")
     if show_sources:
         n_int = len(result.get("internal_evidence", []))

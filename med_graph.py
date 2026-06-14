@@ -15,19 +15,25 @@ from config import EMBED_DIM
 from embeddings import get_embeddings
 from med_nodes import (
     answer,
+    augment_retrieve,
     contextualize,
     extract_memory,
     fuse,
     plan,
     recall_memory,
+    reflect,
     retrieve_external,
     retrieve_internal,
+    route_after_reflect,
 )
 from med_state import MedState
 
 
-def get_med_graph():
-    # 模型按请求动态选（节点内从 config 的 model_tier 取 flash/pro）；checkpointer/store 单例共享。
+def get_med_graph(use_reflect: bool = True):
+    """use_reflect=True（默认）：answer 后走反思回路，不足则补检索重答。
+    use_reflect=False：退回无反思路径（answer → extract_memory 直连），作对照开关。
+    模型按请求动态选（节点内从 config 的 model_tier 取 flash/pro）；checkpointer/store 单例共享。
+    """
     checkpointer = InMemorySaver()  # 短期：会话内多轮
     store = InMemoryStore(index={   # 长期：跨会话用户记忆（BGE 语义检索）
         "embed": get_embeddings(),
@@ -52,7 +58,20 @@ def get_med_graph():
     g.add_edge("retrieve_internal", "retrieve_external")
     g.add_edge("retrieve_external", "fuse")
     g.add_edge("fuse", "answer")
-    g.add_edge("answer", "extract_memory")
+
+    if use_reflect:
+        # 反思回路：answer → reflect →（充分/达上限 → extract_memory / 不足 → augment_retrieve → fuse → answer）
+        g.add_node("reflect", reflect)
+        g.add_node("augment_retrieve", augment_retrieve)
+        g.add_edge("answer", "reflect")
+        g.add_conditional_edges("reflect", route_after_reflect, {
+            "extract_memory": "extract_memory",
+            "augment_retrieve": "augment_retrieve",
+        })
+        g.add_edge("augment_retrieve", "fuse")
+    else:
+        g.add_edge("answer", "extract_memory")
+
     g.add_edge("extract_memory", END)
 
     return g.compile(checkpointer=checkpointer, store=store)

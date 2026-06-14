@@ -3,8 +3,9 @@
 内外部知识融合、带记忆的中文医疗问答助手：用户提一个（可能跨多方面的）医疗问题，Agent 先按
 会话历史做**指代消解**、召回**用户健康背景**（过敏史/慢病），再规划检索、在**内部医学教材库**
 （Qdrant 混合检索）和**外部 Web**（Tavily 联网）两路找证据，融合重排后由 **DeepSeek 带 `[编号]`
-引用作答**（结合用户背景做安全提示），严格防幻觉、可溯源。用 LangGraph 编排（含 checkpointer
-短期记忆 + Store 长期记忆），对外是 FastAPI + 聊天式网页前端，用 Docker compose 部署。
+引用作答**（结合用户背景做安全提示），再**自我反思**证据是否充分、不足则补检索重答，严格防
+幻觉、可溯源。用 LangGraph 编排（Planning + Tool Use + Reflection 反思回路 + checkpointer 短期
+记忆 + Store 长期记忆），对外是 FastAPI + 聊天式网页前端，用 Docker compose 部署。
 
 > ⚠️ 本项目仅供学习演示，**非医疗建议**；如有健康问题请咨询专业医师。
 
@@ -33,6 +34,9 @@
               ▼
           [answer]  结合用户健康背景 + 证据作答，标 [编号]，安全冲突主动提示
               ▼
+          [reflect]  自判证据是否充分？                                  [反思]
+              ├─ 不足 → [augment_retrieve] 用缺失查询补检索 → 回 fuse → answer（≤MAX_REVISIONS）
+              └─ 充分 / 达上限 ▼
           [extract_memory] 自动抽取本轮用户健康事实写回 Store           [长期记忆·写]
               ▼
           带引用的答案 + 证据来源列表
@@ -108,9 +112,9 @@ docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 | **P1** | 医疗 RAG 基线（问诊 → 混合检索 → 带引用作答） | ✅ |
 | **P2** | +Planning（复合问题拆方面 → 分方面检索 → 汇总） | ✅ |
 | **P3** | 知识融合（内部教材 KB + 外部 Tavily Web，带联网开关） | ✅ |
+| **P4** | +Reflection（答完自判证据充分性，不足则用具体缺失查询补检索重答，带修订上限） | ✅ |
 | **P5** | +Memory（短期 checkpointer 多轮指代消解 + 长期 Store 用户健康记忆，自动抽取+召回+安全提示） | ✅ |
-| **P6** | FastAPI 服务 + 聊天式网页前端 + Docker 容器化（已端到端验证） | ✅ |
-| **P4** | +Reflection（答完自判证据充分性，不足换源补检索） | 🚧 待做 |
+| **P6** | FastAPI 服务 + 聊天式网页前端（模型切换胶囊）+ Docker 容器化（已端到端验证） | ✅ |
 | 持久化记忆 | 内存版 → SqliteSaver + Qdrant-backed Store（重启不丢） | 🚧 待做 |
 
 ## 评测
@@ -123,6 +127,7 @@ docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 - `docs/INTERVIEW.md` — 面试速查（Agent 概念 + 项目解读 + Docker 部署）
 - `docs/P0_WALKTHROUGH.md` — 灌库与 Qdrant 操作走查
 - `docs/P1_DESIGN.md` / `docs/P2_5_DESIGN.md` — 基线与多跳设计
+- `docs/P4_DESIGN.md` — 反思回路（证据自检 + 补检索重答）设计与验证
 - `docs/P5_DESIGN.md` — 记忆（短期多轮 + 长期用户记忆）设计与验证
 - `docs/HYBRID_RETRIEVAL_EVIDENCE.md` — 混合检索实证
 - `docs/P6_DEPLOY.md` — Docker 部署详解

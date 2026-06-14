@@ -33,6 +33,7 @@
     .answer { white-space: pre-wrap; line-height: 1.7; font-size: 15px; }
     .answer strong { color: #11233a; }
     .understood { font-size: 12px; color: #8a97a8; margin-bottom: 6px; }
+    .reflect-note { font-size: 12px; color: #1aa86a; margin: 6px 0 2px; }
     .mode { font-size: 12px; color: #6b7a8d; margin: 8px 0 4px; }
     .src-toggle { font-size: 12px; color: #2b7de9; cursor: pointer; margin-top: 8px; user-select: none; }
     .src-list { margin-top: 8px; }
@@ -85,7 +86,7 @@
   <div class="controls-row">
     <label class="toggle-row">
       <input type="checkbox" id="web" />
-      🌐 联网搜索（融合外部 Web；关闭则仅查内部教材，更快）
+      🌐 联网搜索（开启时融合外部 Web；关闭则仅查内部教材，更快）
     </label>
     <div class="model-wrap">
       <button class="model-pill" id="model-pill" onclick="toggleModelMenu(event)">
@@ -95,10 +96,10 @@
       </button>
       <div class="model-menu" id="model-menu">
         <div class="model-item" data-model="flash" onclick="selectModel('flash')">
-          DeepSeek Flash<div class="desc">快、便宜，日常问答（默认）</div>
+          DeepSeek Flash<div class="desc">日常问答（默认）</div>
         </div>
         <div class="model-item" data-model="pro" onclick="selectModel('pro')">
-          DeepSeek Pro<div class="desc">更强推理，复杂 / 疑难问题</div>
+          DeepSeek Pro<div class="desc">更强推理，适用复杂 / 疑难问题</div>
         </div>
       </div>
     </div>
@@ -170,6 +171,9 @@
         html += '<div class="understood">理解为：' + esc(d.standalone_question) + '</div>';
       }
       html += '<div class="answer">' + md(d.answer) + '</div>';
+      if (d.revisions && d.revisions > 1) {
+        html += '<div class="reflect-note">🔁 经过 ' + d.revisions + ' 轮证据反思核验（补检索后重答）</div>';
+      }
       html += '<div class="mode">模式：' + (useWeb ? '内部教材 + 联网 Web' : '仅内部教材')
             + ' ｜ 内部 ' + d.n_internal + ' 段，外部 ' + d.n_external + ' 条 → 重排取 ' + d.evidence.length + '</div>';
       if (d.evidence && d.evidence.length) {
