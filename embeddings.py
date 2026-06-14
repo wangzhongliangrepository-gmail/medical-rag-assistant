@@ -24,6 +24,6 @@ def rerank(query: str, documents: list[str], top_n: int | None = None) -> list[d
     payload = {"model": RERANK_MODEL_UID, "query": query, "documents": documents}
     if top_n is not None:
         payload["top_n"] = top_n
-    resp = requests.post(f"{XINFERENCE_URL}/v1/rerank", json=payload, timeout=60)
+    resp = requests.post(f"{XINFERENCE_URL}/v1/rerank", json=payload, timeout=120)
     resp.raise_for_status()
     return resp.json()["results"]

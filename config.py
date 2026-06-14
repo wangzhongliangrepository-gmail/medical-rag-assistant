@@ -39,6 +39,11 @@ DENSE_VECTOR_NAME = "dense"     # Qdrant 命名向量：稠密
 SPARSE_VECTOR_NAME = "sparse"   # Qdrant 命名向量：稀疏
 RECALL_K = int(os.getenv("RECALL_K", "20"))  # 每路召回条数（融合前）
 
+# --- 外部源（Tavily Web 搜索）+ 知识融合 ---
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")               # 在 tavily.com 注册免费获取
+TAVILY_MAX_RESULTS = int(os.getenv("TAVILY_MAX_RESULTS", "5"))
+FUSE_TOP_K = int(os.getenv("FUSE_TOP_K", "6"))             # 内外部证据融合重排后保留条数
+
 # --- 文档切块（ingestion）---
 # BGE-large-zh max_tokens=512，中文约 1 字≈1 token，故 chunk 控制在 400 字以内最稳。
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))

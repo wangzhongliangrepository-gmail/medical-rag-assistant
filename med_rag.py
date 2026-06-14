@@ -26,10 +26,13 @@ def main() -> None:
         print(f"  - {sq}")
     print()
     print(f"A: {result['answer']}\n")
-    print("来源:")
+    n_int = len(result.get("internal_evidence", []))
+    n_ext = len(result.get("external_evidence", []))
+    print(f"融合来源（内部教材 {n_int} 段 + 外部 Web {n_ext} 条 → 重排取 {len(result['evidence'])}）:")
     for i, e in enumerate(result["evidence"], 1):
         snippet = e["text"][:50].replace("\n", " ")
-        print(f"  [{i}] 教材段#{e['source_id']} (score={e['score']:.3f}) {snippet}...")
+        print(f"  [{i}] (score={e['score']:.3f}) {e['source'][:60]}")
+        print(f"       {snippet}...")
     print(f"\n{DISCLAIMER}")
 
 
