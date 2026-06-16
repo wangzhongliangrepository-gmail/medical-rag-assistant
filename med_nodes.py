@@ -36,7 +36,7 @@ def _user_ns(config: RunnableConfig) -> tuple[str, str]:
 
 
 @lru_cache(maxsize=4)
-def _cached_llm(model: str):
+def _cached_llm(model: str):# 缓存，避免重复创建
     return get_llm(model=model)
 
 
@@ -62,11 +62,11 @@ _CONTEXTUALIZE_PROMPT = """下面是医疗问诊的对话历史和用户最新�
 
 def contextualize(state: MedState, config: RunnableConfig) -> dict:
     """用最近几轮历史把当前问题改写成自包含问题；首轮无历史则原样。"""
-    history = state.get("history", [])
+    history = state.get("history", [])                      #  读历史（checkpointer 已自动恢复）
     if not history:
         return {"standalone_question": state["question"]}
     llm = _llm(config)
-    recent = history[-2 * HISTORY_WINDOW:]  # 一轮含 user+assistant 两条
+    recent = history[-2 * HISTORY_WINDOW:]                   #  只取最近几轮（控制上下文）
     history_text = "\n".join(f"{h['role']}：{h['content']}" for h in recent)
     msg = llm.invoke([
         ("system", "你是医疗问诊的指代消解器，只输出改写后的问题本身。"),
@@ -183,11 +183,8 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
     llm = _llm(config)
     ev = state["evidence"]
     if not ev:
-        ans = "根据现有资料无法回答（未检索到相关内容）。"
-        return {"answer": ans, "history": [
-            {"role": "user", "content": question},
-            {"role": "assistant", "content": ans},
-        ]}
+        # history 不在此写：反思可能让 answer 多次执行，统一由收尾节点 extract_memory 记最终答
+        return {"answer": "根据现有资料无法回答（未检索到相关内容）。"}
     context = "\n\n".join(
         f"[{i + 1}]（{e['source']}）{e['text']}" for i, e in enumerate(ev)
     )
@@ -200,11 +197,7 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
         ("system", _SYSTEM),
         ("human", _ANSWER_PROMPT.format(memory_block=memory_block, context=context, question=question)),
     ])
-    ans = msg.content.strip()
-    return {"answer": ans, "history": [
-        {"role": "user", "content": question},
-        {"role": "assistant", "content": ans},
-    ]}
+    return {"answer": msg.content.strip()}
 
 
 # ---------- 反思：自判证据是否充分（P4 反思回路）----------
@@ -316,7 +309,18 @@ class HealthFacts(BaseModel):
 
 
 def extract_memory(state: MedState, config: RunnableConfig, *, store: BaseStore) -> dict:
-    """从本轮用户原始输入抽取健康事实，逐条写入长期记忆。"""
+    """收尾节点：①把本轮最终 (问,答) 记入短期记忆 history；②从用户原话抽取健康事实写长期记忆。
+
+    history 统一在此写一次——反思重答会让 answer 多次执行，若在 answer 写会重复记同一轮的问与中间草稿。
+    """
+    question = state.get("standalone_question") or state["question"]
+    # ① 短期记忆：一轮只记一组最终问答（无论反思重答几次）
+    hist_update = {"history": [
+        {"role": "user", "content": question},
+        {"role": "assistant", "content": state.get("answer", "")},
+    ]}
+
+    # ② 长期记忆：抽取健康事实（失败不影响 history 写入）
     structured = _llm(config).with_structured_output(HealthFacts, method="json_mode")
     try:
         result = structured.invoke([
@@ -325,10 +329,10 @@ def extract_memory(state: MedState, config: RunnableConfig, *, store: BaseStore)
         ])
     except Exception as e:
         print(f"[warn] 记忆抽取失败，跳过：{type(e).__name__}: {e}")
-        return {}
+        return hist_update
     ns = _user_ns(config)
     for fact in result.facts:
         fact = fact.strip()
         if fact:
             store.put(ns, str(uuid.uuid4()), {"text": fact})
-    return {}
+    return hist_update
