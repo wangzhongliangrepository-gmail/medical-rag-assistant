@@ -21,3 +21,4 @@ qdrant_db/
 *.log
 *_out.txt
 *_err.txt
+.idea/
