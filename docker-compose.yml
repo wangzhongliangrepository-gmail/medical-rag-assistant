@@ -21,6 +21,8 @@ services:
       - XINFERENCE_URL=http://host.docker.internal:9997  # 连宿主机 GPU 上的 Xinference
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./static:/app/static                   # 前端实时挂载：改 index.html 刷新即生效，无需重建镜像
     depends_on:
       - qdrant
     restart: unless-stopped

@@ -6,21 +6,34 @@
   <title>医疗知识助手</title>
   <style>
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
+      margin: 0; display: flex; flex-direction: column; height: 100vh;
       font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-      max-width: 820px; margin: 0 auto; padding: 24px;
       background: #f5f7fa; color: #1a2b3c;
     }
-    h1 { font-size: 22px; margin: 0 0 4px; }
-    .sub { color: #6b7a8d; font-size: 13px; margin-bottom: 16px; }
-    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-    .newchat {
-      font-size: 13px; padding: 6px 12px; background: #fff; color: #2b7de9;
-      border: 1px solid #cfd8e3; border-radius: 8px; cursor: pointer;
+    .wrap { max-width: 800px; margin: 0 auto; width: 100%; }
+
+    /* 顶栏（固定，不滚动）*/
+    header { border-bottom: 1px solid #e6ebf1; background: #fff; padding: 10px 24px; }
+    .hbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .title { font-size: 17px; font-weight: 600; }
+    .hctrl { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #6b7a8d; }
+    .uid-input {
+      width: 130px; padding: 5px 8px; font-size: 13px; border: 1px solid #cfd8e3;
+      border-radius: 7px; outline: none;
     }
-    .newchat:hover { background: #eef4fe; }
-    #chat { min-height: 200px; margin-bottom: 16px; }
+    .uid-input:focus { border-color: #2b7de9; }
+    .hbtn {
+      font-size: 13px; padding: 5px 10px; background: #fff; color: #2b7de9;
+      border: 1px solid #cfd8e3; border-radius: 7px; cursor: pointer;
+    }
+    .hbtn:hover { background: #eef4fe; }
+
+    /* 消息区（唯一滚动区）*/
+    #chat { flex: 1; overflow-y: auto; padding: 22px 24px; }
     .turn { margin-bottom: 16px; }
+    .turn::after { content: ""; display: table; clear: both; }
     .bubble-user {
       background: #2b7de9; color: #fff; padding: 10px 14px; border-radius: 12px 12px 2px 12px;
       display: inline-block; max-width: 85%; float: right; clear: both; font-size: 15px;
@@ -29,7 +42,6 @@
       background: #fff; border: 1px solid #e3e9f0; padding: 12px 16px; border-radius: 12px 12px 12px 2px;
       max-width: 95%; float: left; clear: both;
     }
-    .turn::after { content: ""; display: table; clear: both; }
     .answer { white-space: pre-wrap; line-height: 1.7; font-size: 15px; }
     .answer strong { color: #11233a; }
     .understood { font-size: 12px; color: #8a97a8; margin-bottom: 6px; }
@@ -42,94 +54,162 @@
     .tag-in { background: #2b7de9; }
     .tag-ex { background: #1aa86a; }
     .src-text { color: #5a6b7e; margin-top: 4px; }
-    .input-row { display: flex; gap: 8px; align-items: stretch; position: sticky; bottom: 0; background: #f5f7fa; padding: 8px 0; }
-    #q { flex: 1; padding: 12px 14px; font-size: 15px; border: 1px solid #cfd8e3; border-radius: 8px; outline: none; }
-    #q:focus { border-color: #2b7de9; }
-    button#ask { padding: 0 20px; font-size: 15px; background: #2b7de9; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
-    button#ask:disabled { background: #9bb8e0; cursor: not-allowed; }
-    .toggle-row { margin: 6px 0; font-size: 13px; color: #34465c; display: flex; align-items: center; gap: 8px; }
-    .toggle-row input { width: 16px; height: 16px; }
+    .sys-note { text-align: center; color: #9aa7b6; font-size: 12.5px; margin: 10px 0; }
     .loading { color: #6b7a8d; }
-    .disclaimer { color: #b06b00; font-size: 12px; margin-top: 12px; }
-    /* 模型选择胶囊 */
-    .controls-row { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; }
-    .model-wrap { position: relative; }
+
+    /* 输入区（固定底部，不随对话下移）*/
+    .composer { padding: 0 24px 10px; }
+    .composer-box {
+      max-width: 800px; margin: 0 auto; background: #fff; border: 1px solid #cfd8e3;
+      border-radius: 16px; padding: 10px 12px 8px; box-shadow: 0 2px 12px rgba(20,40,80,.05);
+    }
+    .composer-box:focus-within { border-color: #2b7de9; }
+    #q {
+      width: 100%; border: none; outline: none; resize: none; font-size: 15px;
+      line-height: 1.5; max-height: 160px; font-family: inherit; color: #1a2b3c;
+      background: transparent;
+    }
+    .composer-bar { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+    .left, .right { display: flex; align-items: center; gap: 8px; }
+
+    /* + 按钮 + 菜单（左下，含联网开关）*/
+    .plus-wrap, .model-wrap { position: relative; }
+    .plus {
+      width: 32px; height: 32px; border-radius: 8px; border: 1px solid #cfd8e3;
+      background: #fff; cursor: pointer; font-size: 18px; color: #46586d; line-height: 1;
+    }
+    .plus:hover { background: #f2f6fb; }
+    .plus-menu, .model-menu {
+      position: absolute; bottom: 40px; background: #fff; border: 1px solid #cfd8e3;
+      border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 6px;
+      display: none; z-index: 20; min-width: 220px;
+    }
+    .plus-menu { left: 0; }
+    .model-menu { right: 0; }
+    .plus-menu.open, .model-menu.open { display: block; }
+    .menu-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 14px; cursor: pointer; border-radius: 7px; }
+    .menu-toggle:hover { background: #f2f6fb; }
+    .menu-toggle input { width: 16px; height: 16px; }
+
+    /* 模型胶囊（右下）*/
     .model-pill {
-      display: inline-flex; align-items: center; gap: 6px; background: #1a2b3c; color: #fff;
-      font-size: 13px; padding: 6px 12px; border-radius: 16px; cursor: pointer; border: none;
+      display: inline-flex; align-items: center; gap: 5px; background: #fff; color: #34465c;
+      font-size: 13px; padding: 6px 10px; border-radius: 16px; cursor: pointer; border: 1px solid #cfd8e3;
     }
-    .model-pill .tier { color: #9bb0c5; }
-    .model-pill .caret { color: #9bb0c5; font-size: 11px; }
-    .model-menu {
-      position: absolute; right: 0; bottom: 38px; background: #fff; border: 1px solid #cfd8e3;
-      border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12); overflow: hidden;
-      min-width: 220px; display: none; z-index: 10;
-    }
-    .model-menu.open { display: block; }
-    .model-item { padding: 10px 14px; cursor: pointer; font-size: 14px; color: #1a2b3c; }
+    .model-pill:hover { background: #f2f6fb; }
+    .model-pill .tier { color: #9aa7b6; }
+    .model-pill .caret { color: #9aa7b6; font-size: 11px; }
+    .model-item { padding: 9px 12px; cursor: pointer; font-size: 14px; color: #1a2b3c; border-radius: 7px; }
     .model-item:hover { background: #eef4fe; }
     .model-item.active { background: #f0f6ff; }
     .model-item .desc { font-size: 12px; color: #8a97a8; margin-top: 2px; }
+
+    .send {
+      width: 34px; height: 34px; border-radius: 9px; border: none; background: #2b7de9;
+      color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .send:hover { background: #1f6fd6; }
+    .send:disabled { background: #9bb8e0; cursor: not-allowed; }
+    .send svg { display: block; }
+    .disclaimer { text-align: center; color: #b06b00; font-size: 11.5px; margin: 6px 0 0; }
   </style>
 </head>
 <body>
-  <h1>🩺 医疗知识助手</h1>
-  <div class="sub">混合检索（语义+词面）+ 知识融合（内部教材 + 联网 Web）+ 记忆（多轮 + 用户健康背景）</div>
-
-  <div class="topbar">
-    <span class="mode" id="uid-label"></span>
-    <button class="newchat" onclick="newChat()">🆕 新会话</button>
-  </div>
+  <header>
+    <div class="wrap hbar">
+      <div class="title">🩺 医疗知识助手</div>
+      <div class="hctrl">
+        <span>用户ID</span>
+        <input id="uid-input" class="uid-input" title="改成不同 ID 可测试长期记忆隔离" />
+        <button class="hbtn" onclick="applyUid()">切换</button>
+        <button class="hbtn" onclick="newChat()">🆕 新会话</button>
+      </div>
+    </div>
+  </header>
 
   <div id="chat"></div>
 
-  <div class="controls-row">
-    <label class="toggle-row">
-      <input type="checkbox" id="web" />
-      🌐 联网搜索（开启时融合外部 Web；关闭则仅查内部教材，更快）
-    </label>
-    <div class="model-wrap">
-      <button class="model-pill" id="model-pill" onclick="toggleModelMenu(event)">
-        <span id="model-name">DeepSeek Flash</span>
-        <span class="tier" id="model-tier">快</span>
-        <span class="caret">⌄</span>
-      </button>
-      <div class="model-menu" id="model-menu">
-        <div class="model-item" data-model="flash" onclick="selectModel('flash')">
-          DeepSeek Flash<div class="desc">日常问答（默认）</div>
+  <div class="composer">
+    <div class="composer-box">
+      <textarea id="q" rows="1" placeholder="输入医疗问题…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <div class="composer-bar">
+        <div class="left">
+          <div class="plus-wrap">
+            <button class="plus" onclick="togglePlus(event)" title="更多选项">+</button>
+            <div class="plus-menu" id="plus-menu">
+              <label class="menu-toggle">
+                <input type="checkbox" id="web" />
+                🌐 联网搜索（融合外部 Web，更慢）
+              </label>
+            </div>
+          </div>
         </div>
-        <div class="model-item" data-model="pro" onclick="selectModel('pro')">
-          DeepSeek Pro<div class="desc">更强推理，适用复杂 / 疑难问题</div>
+        <div class="right">
+          <div class="model-wrap">
+            <button class="model-pill" onclick="toggleModelMenu(event)">
+              <span id="model-name">DeepSeek Flash</span>
+              <span class="tier" id="model-tier">快</span>
+              <span class="caret">⌄</span>
+            </button>
+            <div class="model-menu" id="model-menu">
+              <div class="model-item" data-model="flash" onclick="selectModel('flash')">
+                DeepSeek Flash<div class="desc">日常问答（默认）</div>
+              </div>
+              <div class="model-item" data-model="pro" onclick="selectModel('pro')">
+                DeepSeek Pro<div class="desc">更强推理，复杂 / 疑难问题</div>
+              </div>
+            </div>
+          </div>
+          <button class="send" id="ask" onclick="ask()" title="发送" aria-label="发送">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="20" x2="12" y2="5"></line>
+              <polyline points="6 11 12 5 18 11"></polyline>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
+    <div class="disclaimer">⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。</div>
   </div>
-  <div class="input-row">
-    <input id="q" placeholder="输入医疗问题，例如：二甲双胍的副作用和禁忌" />
-    <button id="ask" onclick="ask()">发送</button>
-  </div>
-  <div class="disclaimer">⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。</div>
 
   <script>
     const $ = (id) => document.getElementById(id);
-
-    // user_id 长期不变（跨会话长期记忆）；session_id 每个会话一个（短期记忆 thread）
     function uuid() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()); }
-    let USER_ID = localStorage.getItem("med_user_id");
-    if (!USER_ID) { USER_ID = uuid(); localStorage.setItem("med_user_id", USER_ID); }
-    let SESSION_ID = localStorage.getItem("med_session_id");
-    if (!SESSION_ID) { SESSION_ID = uuid(); localStorage.setItem("med_session_id", SESSION_ID); }
-    $("uid-label").textContent = "用户 " + USER_ID.slice(0, 8) + " ｜ 会话 " + SESSION_ID.slice(0, 8);
+
+    // user_id：长期记忆身份（可手动改，测隔离）；session_id：会话/短期记忆 thread
+    let USER_ID = localStorage.getItem("med_user_id") || ("user-" + uuid().slice(0, 4));
+    localStorage.setItem("med_user_id", USER_ID);
+    let SESSION_ID = localStorage.getItem("med_session_id") || uuid();
+    localStorage.setItem("med_session_id", SESSION_ID);
+    $("uid-input").value = USER_ID;
+
+    function sysNote(text) {
+      const d = document.createElement("div");
+      d.className = "sys-note"; d.textContent = text;
+      $("chat").appendChild(d); d.scrollIntoView({ block: "end" });
+    }
 
     function newChat() {
-      SESSION_ID = uuid();
-      localStorage.setItem("med_session_id", SESSION_ID);
+      SESSION_ID = uuid(); localStorage.setItem("med_session_id", SESSION_ID);
       $("chat").innerHTML = "";
-      $("uid-label").textContent = "用户 " + USER_ID.slice(0, 8) + " ｜ 会话 " + SESSION_ID.slice(0, 8);
+      sysNote("新会话开始（用户 " + USER_ID + "）｜ 长期记忆按用户ID保留，短期对话已清空");
       $("q").focus();
     }
 
-    // 模型选择（flash / pro），存 localStorage
+    function applyUid() {
+      const v = $("uid-input").value.trim();
+      if (!v) { $("uid-input").value = USER_ID; return; }
+      if (v === USER_ID) return;
+      USER_ID = v; localStorage.setItem("med_user_id", v);
+      SESSION_ID = uuid(); localStorage.setItem("med_session_id", SESSION_ID);
+      $("chat").innerHTML = "";
+      sysNote("已切换用户：" + v + "｜将读取该用户的长期记忆（换 ID 即换身份，可测记忆隔离）");
+      $("q").focus();
+    }
+
+    // 模型选择
     let MODEL = localStorage.getItem("med_model") || "flash";
     function renderModel() {
       $("model-name").textContent = MODEL === "pro" ? "DeepSeek Pro" : "DeepSeek Flash";
@@ -137,12 +217,12 @@
       document.querySelectorAll(".model-item").forEach((el) =>
         el.classList.toggle("active", el.dataset.model === MODEL));
     }
-    function toggleModelMenu(e) { e.stopPropagation(); $("model-menu").classList.toggle("open"); }
-    function selectModel(m) {
-      MODEL = m; localStorage.setItem("med_model", m);
-      renderModel(); $("model-menu").classList.remove("open");
-    }
-    document.addEventListener("click", () => $("model-menu").classList.remove("open"));
+    function closeMenus() { $("model-menu").classList.remove("open"); $("plus-menu").classList.remove("open"); }
+    function toggleModelMenu(e) { e.stopPropagation(); const o = $("model-menu").classList.contains("open"); closeMenus(); if (!o) $("model-menu").classList.add("open"); }
+    function togglePlus(e) { e.stopPropagation(); const o = $("plus-menu").classList.contains("open"); closeMenus(); if (!o) $("plus-menu").classList.add("open"); }
+    function selectModel(m) { MODEL = m; localStorage.setItem("med_model", m); renderModel(); closeMenus(); }
+    document.addEventListener("click", closeMenus);
+    $("plus-menu").addEventListener("click", (e) => e.stopPropagation());  // 菜单内点击不关闭
     renderModel();
 
     function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -152,16 +232,13 @@
       const div = document.createElement("div");
       div.className = "turn";
       div.innerHTML = '<div class="bubble-user">' + esc(text) + '</div>';
-      $("chat").appendChild(div);
-      div.scrollIntoView({ behavior: "smooth", block: "end" });
+      $("chat").appendChild(div); div.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-
     function addBotBubble(html) {
       const div = document.createElement("div");
       div.className = "turn";
       div.innerHTML = '<div class="bubble-bot">' + html + '</div>';
-      $("chat").appendChild(div);
-      div.scrollIntoView({ behavior: "smooth", block: "end" });
+      $("chat").appendChild(div); div.scrollIntoView({ behavior: "smooth", block: "end" });
       return div;
     }
 
@@ -178,7 +255,7 @@
             + ' ｜ 内部 ' + d.n_internal + ' 段，外部 ' + d.n_external + ' 条 → 重排取 ' + d.evidence.length + '</div>';
       if (d.evidence && d.evidence.length) {
         const sid = "src-" + Date.now();
-        html += '<div class="src-toggle" onclick="document.getElementById(\'' + sid + '\').style.display=(document.getElementById(\'' + sid + '\').style.display===\'none\'?\'block\':\'none\')">▾ 查看来源（' + d.evidence.length + '）</div>';
+        html += '<div class="src-toggle" onclick="var x=document.getElementById(\'' + sid + '\');x.style.display=(x.style.display===\'none\'?\'block\':\'none\')">▾ 查看来源（' + d.evidence.length + '）</div>';
         html += '<div class="src-list" id="' + sid + '" style="display:none">';
         d.evidence.forEach((e, i) => {
           const isExt = e.source.startsWith("外部");
@@ -197,7 +274,7 @@
       if (!q) return;
       const useWeb = $("web").checked;
       $("ask").disabled = true;
-      $("q").value = "";
+      $("q").value = ""; $("q").style.height = "auto";
       addUserBubble(q);
       const loading = addBotBubble('<div class="loading">检索中…' + (useWeb ? '（含联网，稍慢）' : '') + '</div>');
       try {
@@ -213,12 +290,19 @@
       } catch (e) {
         loading.querySelector(".bubble-bot").innerHTML = '<div style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
       } finally {
-        $("ask").disabled = false;
-        $("q").focus();
+        $("ask").disabled = false; $("q").focus();
       }
     }
 
-    $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask(); });
+    // textarea：自动增高 + Enter 发送 / Shift+Enter 换行
+    $("q").addEventListener("input", function () {
+      this.style.height = "auto"; this.style.height = Math.min(this.scrollHeight, 160) + "px";
+    });
+    $("q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); }
+    });
+
+    sysNote("输入医疗问题开始对话。改顶部「用户ID」可切换身份、测试长期记忆隔离。");
   </script>
 </body>
 </html>

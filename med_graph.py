@@ -30,18 +30,18 @@ from med_state import MedState
 
 
 def get_med_graph(use_reflect: bool = True):
-    """use_reflect=True（默认）：answer 后走反思回路，不足则补检索重答。
+    """use_reflect 是反思回路的开关：默认 True 走完整反思；传 False 退回「答完直接结束」
     use_reflect=False：退回无反思路径（answer → extract_memory 直连），作对照开关。
     模型按请求动态选（节点内从 config 的 model_tier 取 flash/pro）；checkpointer/store 单例共享。
     """
     checkpointer = InMemorySaver()  # 短期：会话内多轮
     store = InMemoryStore(index={   # 长期：跨会话用户记忆（BGE 语义检索）
-        "embed": get_embeddings(),
-        "dims": EMBED_DIM,
-        "fields": ["text"],
+        "embed": get_embeddings(),  # 用 BGE 把记忆向量化
+        "dims": EMBED_DIM,          # 向量维度 1024
+        "fields": ["text"],         # 对哪个字段建语义索引
     })
 
-    g = StateGraph(MedState)
+    g = StateGraph(MedState)                                # 建一张以 MedState 为状态的空图
     g.add_node("contextualize", contextualize)
     g.add_node("recall_memory", recall_memory)
     g.add_node("plan", plan)

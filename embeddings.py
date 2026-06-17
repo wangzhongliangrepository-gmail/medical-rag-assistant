@@ -1,9 +1,5 @@
 """Xinference 上的 BGE 向量化与重排。
-
-- 向量化：用 langchain_community 的 XinferenceEmbeddings，需要 `pip install xinference_client`，
   传 server_url + model_uid（UID，不是模型名）。
-- 重排：LangChain 没有一等公民的 Xinference 重排器，直接打 /v1/rerank REST 接口最稳，
-  避免客户端版本差异。
 """
 import requests
 from langchain_community.embeddings import XinferenceEmbeddings
