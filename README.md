@@ -51,27 +51,9 @@
 
 ## 🏗 架构 · 图主干
 
-```mermaid
-flowchart TD
-    Q["用户提问<br/>session_id 短期 · user_id 长期"] --> CTX["contextualize<br/>用历史做指代消解 → 自包含问题"]
-    CTX --> RECALL["recall_memory<br/>按 user_id 召回健康背景（过敏/慢病）"]
-    RECALL --> PLAN["plan<br/>复合问诊拆 1-3 个方面子问题"]
-    PLAN --> RIN["retrieve_internal<br/>Qdrant 混合检索<br/>dense + sparse → RRF → rerank"]
-    PLAN --> REX["retrieve_external<br/>Tavily Web（联网开关，可选）"]
-    RIN --> FUSE["fuse<br/>内外部证据合并去重 → 统一重排 top-k"]
-    REX --> FUSE
-    FUSE --> ANS["answer<br/>结合健康背景 + 证据，带 [编号] 引用 + 安全提示"]
-    ANS --> REF{"reflect<br/>证据够支撑安全完整回答吗？"}
-    REF -->|不足| AUG["augment_retrieve<br/>用具体缺失查询补检索（≤ MAX_REVISIONS）"]
-    AUG --> FUSE
-    REF -->|充分 / 达上限| EXM["extract_memory<br/>抽取本轮健康事实写回 Store"]
-    EXM --> OUT(["带引用答案 + 证据来源列表"])
-
-    classDef mem fill:#eef4fe,stroke:#2b7de9,color:#1a2b3c;
-    classDef ref fill:#eafaf1,stroke:#1aa86a,color:#1a2b3c;
-    class CTX,RECALL,EXM mem;
-    class REF,AUG ref;
-```
+<div align="center">
+  <img src="docs/images/architecture.png" width="640" alt="图主干：混合检索 + 知识融合 + 反思回路 + 短/长期记忆的 LangGraph 流程" />
+</div>
 
 记忆挂载（`med_graph.py`）：`compile(checkpointer=InMemorySaver(), store=InMemoryStore(index=BGE))`；
 调用传 `config={"configurable": {"thread_id": session_id, "user_id": user_id}}`。
@@ -130,6 +112,8 @@ docker compose up -d qdrant            # 1. 起向量库服务器
 export QDRANT_URL=http://localhost:6333 && python ingest.py --recreate  # 2. 灌库
 docker compose up -d --build app       # 3. 起 app → http://localhost:8000
 ```
+
+
 **本地落盘 → 容器部署只切环境变量 `QDRANT_URL`，零代码改动。** Xinference 留宿主机（GPU），app 容器经 `host.docker.internal:9997` 连。
 
 ---
