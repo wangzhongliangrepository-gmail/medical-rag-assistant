@@ -136,7 +136,7 @@ med_rag.py       CLI 入口：python med_rag.py "问题" [--web] [--chat]
 server.py        FastAPI 服务：/ /health /chat /chat/stream(SSE)
 static/index.html 聊天式网页前端（联网开关 + 模型切换胶囊）
 Dockerfile / docker-compose.yml / .dockerignore   容器化部署
-docs/            设计与部署文档（P5_DESIGN / P6_DEPLOY）+ 演示图（images/）
+docs/            逐阶段设计文档 P0→P6（见 docs/README.md）+ 演示图（images/）
 ```
 
 ---
@@ -159,7 +159,7 @@ docs/            设计与部署文档（P5_DESIGN / P6_DEPLOY）+ 演示图（i
 ## 📝 评测
 
 医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量，
-见 `eval_retrieval.py` 与 `docs/`。
+见 `eval_retrieval.py`。**逐阶段设计文档（P0→P6）见 [`docs/`](docs/README.md)**，讲清每层的目标与设计取舍。
 
 ## 📄 License
 
