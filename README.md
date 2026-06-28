@@ -136,7 +136,7 @@ med_rag.py       CLI 入口：python med_rag.py "问题" [--web] [--chat]
 server.py        FastAPI 服务：/ /health /chat /chat/stream(SSE)
 static/index.html 聊天式网页前端（联网开关 + 模型切换胶囊）
 Dockerfile / docker-compose.yml / .dockerignore   容器化部署
-docs/            设计、部署与各支柱学习串讲文档
+docs/            设计与部署文档（P5_DESIGN / P6_DEPLOY）+ 演示图（images/）
 ```
 
 ---
