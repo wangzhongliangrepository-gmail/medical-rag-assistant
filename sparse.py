@@ -7,15 +7,15 @@
 """
 from fastembed import SparseTextEmbedding
 
-from config import SPARSE_MODEL
+from config import FASTEMBED_CACHE_DIR, SPARSE_MODEL
 
 _model: SparseTextEmbedding | None = None
-
-
 def _get_model() -> SparseTextEmbedding:
     global _model
     if _model is None:
-        _model = SparseTextEmbedding(model_name=SPARSE_MODEL)
+        # 显式指定 cache_dir 指向项目内预置缓存，避免依赖 fastembed 的系统默认目录
+        # （各平台不一致，且离线环境无法联网下载），clone 下来即开箱即用。
+        _model = SparseTextEmbedding(model_name=SPARSE_MODEL, cache_dir=FASTEMBED_CACHE_DIR)
     return _model
 
 

@@ -14,6 +14,7 @@ from langgraph.store.base import BaseStore
 from pydantic import BaseModel
 
 from config import (
+    ENTITY_HINT_K,
     FUSE_TOP_K,
     HISTORY_WINDOW,
     LLM_FLASH,
@@ -46,33 +47,123 @@ def _llm(config: RunnableConfig):
     return _cached_llm(LLM_PRO if tier == "pro" else LLM_FLASH)
 
 
-# ---------- 短期记忆：指代消解 ----------
+# ---------- 短期记忆：指代消解（过滤 + 最近优先）----------
 
-_CONTEXTUALIZE_PROMPT = """下面是医疗问诊的对话历史和用户最新一句话。
-请把最新这句改写成一个**自包含、可独立检索**的问题：把「它/那个/上述/这种药」等指代
-替换成历史中明确的实体。若最新这句本身已自包含，原样返回。只输出改写后的问题，不要解释。
+# 指代词：出现这些才需要借助实体清单消解（自包含问题直接跳过，省一次推理）
+_PRONOUNS = (
+    "它", "它们", "他", "她", "这个", "那个", "这种", "那种", "这类", "那类",
+    "该药", "此药", "这药", "那药", "这病", "那病", "该病", "上述", "上面", "前面",
+)
+# 属性词 → 指代对象的类型。用于"过滤"：只保留与问题属性同类的候选实体。
+_DRUG_ATTRS = (
+    "副作用", "不良反应", "禁忌", "剂量", "用量", "用法", "服用", "怎么吃", "饭前",
+    "饭后", "相互作用", "配伍", "过量", "漏服", "停药", "起效", "疗程", "适应症",
+)
+_DISEASE_ATTRS = (
+    "症状", "表现", "病因", "成因", "诱因", "并发症", "怎么治", "如何治疗", "治疗",
+    "检查", "诊断", "预后", "传染", "遗传", "危害", "分期", "分型",
+)
+
+
+def _has_pronoun(text: str) -> bool:
+    """问题里是否含需要消解的指代词。"""
+    return any(p in text for p in _PRONOUNS)
+
+
+def _guess_ref_type(text: str) -> str:
+    """据问题里的属性词猜「它」指向的类型：'drug' / 'disease' / ''（判不出）。"""
+    is_drug = any(a in text for a in _DRUG_ATTRS)
+    is_disease = any(a in text for a in _DISEASE_ATTRS)
+    if is_drug and not is_disease:
+        return "drug"
+    if is_disease and not is_drug:
+        return "disease"
+    return ""  # 都命中或都不命中 → 判不出，交给 LLM 结合语境
+
+
+def _filter_and_order_entities(entities: list[dict], ref_type: str,
+                               limit: int = ENTITY_HINT_K) -> list[dict]:
+    """指代消解的核心：① 过滤（只留同类）② 最近优先（去重后倒序，最近的在前）。
+
+    entities 是累积列表（最近的在尾部）。ref_type 非空时只保留同类，否则全保留。
+    """
+    # ① 过滤：判出了指代类型就只留同类，否则保留全部候选
+    cands = [e for e in entities if e.get("type") == ref_type] if ref_type else list(entities)
+    # ② 最近优先：从尾（最近）往头遍历去重，最近一次提及的排前面
+    seen: set[str] = set()
+    ordered: list[dict] = []
+    for e in reversed(cands):
+        name = (e.get("name") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            ordered.append(e)
+    return ordered[:limit]
+
+
+_CONTEXTUALIZE_PROMPT = """下面是医疗问诊的对话历史、已提到的实体清单，和用户最新一句话。
+
+任务1（指代消解）：把最新这句改写成**自包含、可独立检索**的问题——把「它/那个/这种药/上述」
+等指代替换成明确实体。替换时**优先用「实体清单」里最靠前（最近期）的同类实体**；若对话历史里
+有更明确的线索，以历史为准。若最新这句本身已自包含，原样返回。
+
+任务2（实体识别）：识别最新这句（改写后）主要涉及的**药名、疾病名**（用规范名），
+分别放进 drugs / diseases；没有就给空列表。
 
 对话历史：
 {history}
 
-最新这句：{question}
+已提到的实体清单（越靠前越近期）：
+{entities}
 
-改写后的问题："""
+最新这句：{question}"""
+
+
+class Contextualized(BaseModel):
+    standalone_question: str
+    drugs: list[str] = []
+    diseases: list[str] = []
 
 
 def contextualize(state: MedState, config: RunnableConfig) -> dict:
-    """用最近几轮历史把当前问题改写成自包含问题；首轮无历史则原样。"""
-    history = state.get("history", [])                      #  读历史（checkpointer 已自动恢复）
-    if not history:
-        return {"standalone_question": state["question"]}
-    llm = _llm(config)
-    recent = history[-2 * HISTORY_WINDOW:]                   #  只取最近几轮（控制上下文）
-    history_text = "\n".join(f"{h['role']}：{h['content']}" for h in recent)
-    msg = llm.invoke([
-        ("system", "你是医疗问诊的指代消解器，只输出改写后的问题本身。"),
-        ("human", _CONTEXTUALIZE_PROMPT.format(history=history_text, question=state["question"])),
-    ])
-    return {"standalone_question": msg.content.strip() or state["question"]}
+    """指代消解 + 实体识别（一次结构化调用搞定两件事）。
+
+    消解：用最近几轮历史 + 会话实体清单（过滤同类 + 最近优先）把「它/那个」还原成具体实体。
+    识别：抽出本轮涉及的药/病累积进 mentioned_entities，供后续轮的消解用。
+    """
+    question = state["question"]
+    history = state.get("history", [])
+    entities = state.get("mentioned_entities", [])
+
+    # 仅当含指代时才需要候选实体提示；据属性词过滤同类、最近优先排序
+    ref_type = _guess_ref_type(question) if _has_pronoun(question) else ""
+    hint = _filter_and_order_entities(entities, ref_type) if _has_pronoun(question) else []
+    entities_text = "\n".join(
+        f"- {e['name']}（{'药' if e.get('type') == 'drug' else '疾病'}）" for e in hint
+    ) or "（无）"
+
+    recent = history[-2 * HISTORY_WINDOW:]                  # 只取最近几轮（控制上下文）
+    history_text = "\n".join(f"{h['role']}：{h['content']}" for h in recent) or "（无）"
+
+    structured = _llm(config).with_structured_output(Contextualized, method="json_mode")
+    try:
+        result = structured.invoke([
+            ("system", '你是医疗问诊的指代消解+实体识别器，只输出合法 JSON，'
+                       '格式：{"standalone_question": "...", "drugs": [...], "diseases": [...]}'),
+            ("human", _CONTEXTUALIZE_PROMPT.format(
+                history=history_text, entities=entities_text, question=question)),
+        ])
+    except Exception as e:
+        print(f"[warn] 指代消解失败，用原问题：{type(e).__name__}: {e}")
+        return {"standalone_question": question}
+
+    new_entities = (
+        [{"name": d.strip(), "type": "drug"} for d in result.drugs if d.strip()]
+        + [{"name": s.strip(), "type": "disease"} for s in result.diseases if s.strip()]
+    )
+    return {
+        "standalone_question": result.standalone_question.strip() or question,
+        "mentioned_entities": new_entities,   # operator.add 累积进会话实体清单
+    }
 
 
 # ---------- 长期记忆：召回 ----------

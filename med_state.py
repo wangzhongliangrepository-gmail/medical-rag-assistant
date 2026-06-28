@@ -10,6 +10,8 @@ class MedState(TypedDict):
     # --- 短期记忆（会话内多轮，靠 checkpointer 跨轮持久化）---
     history: Annotated[list[dict], operator.add]  # [{role, content}]，累积式
     standalone_question: str         # contextualize 用 history 改写后的自包含问题
+    # 会话内提到过的医学实体（药/病），累积式、最近的在后；供指代消解"过滤+最近优先"
+    mentioned_entities: Annotated[list[dict], operator.add]  # [{"name": str, "type": "drug"|"disease"}]
 
     # --- 长期用户记忆（本轮召回，临时）---
     user_memory: list[str]           # recall_memory 召回的用户健康事实

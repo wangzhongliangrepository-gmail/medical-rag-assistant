@@ -1,9 +1,13 @@
 """集中管理端点与模型标识，全部可被 .env 覆盖。"""
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# 项目根目录（config.py 所在处），用于拼项目内的离线资源绝对路径
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 # --- DeepSeek 云端 LLM ---
 # 模型 ID：
@@ -15,7 +19,7 @@ LLM_FLASH = os.getenv("LLM_FLASH", "deepseek-v4-flash")
 LLM_PRO   = os.getenv("LLM_PRO",   "deepseek-v4-pro")
 LLM_MODEL = os.getenv("LLM_MODEL", LLM_FLASH)  # 兼容旧用法
 
-# --- Xinference / BGE（向量化 + 重排，本地，DeepSeek 没有 embedding 接口）---
+# --- Xinference / BGE（向量化 + 重排）---
 XINFERENCE_URL = os.getenv("XINFERENCE_URL", "http://localhost:9997")
 # 这两个是 Xinference 启动模型时返回的 UID（不是模型名），用 `xinference list` 查
 EMBED_MODEL_UID = os.getenv("EMBED_MODEL_UID", "bge-m3")
@@ -34,26 +38,29 @@ QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "medical_kb")
 # dense 来自 bge-m3（Xinference）；sparse 来自 FastEmbed 本地 BM25。
 # 两路在 Qdrant 内用 RRF 融合，再过 bge-reranker-v2-m3 重排。
 SPARSE_MODEL = os.getenv("SPARSE_MODEL", "Qdrant/bm25")  # FastEmbed 稀疏模型
+# BM25 模型缓存目录：默认指向项目内预置的离线缓存（HF hub 布局），
+# clone 下来即开箱即用，无需联网下载，本地/容器一致（Docker 里为 /app/fastembed_cache）。
+FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_DIR", str(PROJECT_ROOT / "fastembed_cache"))
 DENSE_VECTOR_NAME = "dense"     # Qdrant 命名向量：稠密
 SPARSE_VECTOR_NAME = "sparse"   # Qdrant 命名向量：稀疏
 RECALL_K = int(os.getenv("RECALL_K", "20"))  # 每路召回条数（融合前）
 
 # --- 外部源（Tavily Web 搜索）+ 知识融合 ---
-TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")               # 在 tavily.com 注册免费获取
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 TAVILY_MAX_RESULTS = int(os.getenv("TAVILY_MAX_RESULTS", "5"))
 FUSE_TOP_K = int(os.getenv("FUSE_TOP_K", "6"))             # 内外部证据融合重排后保留条数
 
 # --- 文档切块（ingestion）---
-# BGE-large-zh max_tokens=512，中文约 1 字≈1 token，故 chunk 控制在 400 字以内最稳。
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "400"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
 
-# --- 记忆（P5）---
+# --- 记忆---
 # 短期：会话内多轮（checkpointer，按 thread_id）；长期：跨会话用户健康事实（Store，按 user_id）。
 MEMORY_NAMESPACE = os.getenv("MEMORY_NAMESPACE", "memories")  # 长期记忆 Store 的 namespace 前缀
 MEMORY_RECALL_K = int(os.getenv("MEMORY_RECALL_K", "3"))      # 每轮从长期记忆语义召回条数
 HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "4"))        # 指代消解参考的最近对话轮数
+ENTITY_HINT_K = int(os.getenv("ENTITY_HINT_K", "5"))         # 指代消解时注入的候选实体上限（最近优先）
 
-# --- 反思（P4）---
+# --- 反思---
 # answer 后自判证据是否充分，不足则补检索重答；硬上限防死循环（医疗克制，最多补检索 1 次）。
 MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "2"))

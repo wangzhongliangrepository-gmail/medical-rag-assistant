@@ -56,6 +56,10 @@
     .src-text { color: #5a6b7e; margin-top: 4px; }
     .sys-note { text-align: center; color: #9aa7b6; font-size: 12.5px; margin: 10px 0; }
     .loading { color: #6b7a8d; }
+    .progress { font-size: 12.5px; color: #8a97a8; margin-bottom: 8px; }
+    .pstep { padding: 1px 0; transition: color .2s; }
+    .pstep.cur { color: #2b7de9; }
+    .pstep.done { color: #1aa86a; }
 
     /* 输入区（固定底部，不随对话下移）*/
     .composer { padding: 0 24px 10px; }
@@ -269,6 +273,42 @@
       return html;
     }
 
+    // 解析 SSE 流：读 fetch 的 ReadableStream，按空行(\n\n)切出一条条事件
+    // （EventSource 只支持 GET，我们的 /chat/stream 是 POST 带 body，所以手动解析）
+    async function* sseEvents(resp) {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const raw = buf.slice(0, i); buf = buf.slice(i + 2);
+          let ev = "message", data = "";
+          raw.split("\n").forEach((line) => {
+            if (line.startsWith("event:")) ev = line.slice(6).trim();
+            else if (line.startsWith("data:")) data += line.slice(5).trim();
+          });
+          if (data) yield { event: ev, data: JSON.parse(data) };
+        }
+      }
+    }
+
+    // 边跑边渲染的中间态：进度清单（最后一步带 ⏳）+ 已到的答案
+    function renderProgress(steps, answerHtml) {
+      let h = '<div class="progress">';
+      steps.forEach((s, i) => {
+        const cur = i === steps.length - 1 && !answerHtml;
+        h += '<div class="pstep ' + (cur ? 'cur' : 'done') + '">'
+           + (cur ? '⏳ ' : '✓ ') + esc(s) + '</div>';
+      });
+      h += '</div>';
+      if (answerHtml) h += '<div class="answer">' + answerHtml + '</div>';
+      return h;
+    }
+
     async function ask() {
       const q = $("q").value.trim();
       if (!q) return;
@@ -276,19 +316,40 @@
       $("ask").disabled = true;
       $("q").value = ""; $("q").style.height = "auto";
       addUserBubble(q);
-      const loading = addBotBubble('<div class="loading">检索中…' + (useWeb ? '（含联网，稍慢）' : '') + '</div>');
+      const loading = addBotBubble('<div class="loading">连接中…</div>');
+      const bub = loading.querySelector(".bubble-bot");
       try {
-        const resp = await fetch("/chat", {
+        const resp = await fetch("/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question: q, use_external: useWeb, session_id: SESSION_ID, user_id: USER_ID, model: MODEL }),
         });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
-        const d = await resp.json();
-        loading.querySelector(".bubble-bot").innerHTML = renderAnswer(q, d, useWeb);
+
+        const steps = [];          // 进度文案（按节点累积）
+        let answerText = "";       // 最新答案（反思重答会覆盖）
+        let doneData = null;       // 收尾的结构化元数据（证据等）
+        for await (const { event, data } of sseEvents(resp)) {
+          if (event === "progress") {
+            steps.push(data.label);
+            bub.innerHTML = renderProgress(steps, answerText ? md(answerText) : "");
+          } else if (event === "answer") {
+            answerText = data.text;
+            bub.innerHTML = renderProgress(steps, md(answerText));
+          } else if (event === "done") {
+            doneData = data;
+          } else if (event === "error") {
+            throw new Error((data.error || "服务错误") + (data.trace_id ? " [" + data.trace_id + "]" : ""));
+          }
+          loading.scrollIntoView({ behavior: "smooth", block: "end" });
+        }
+
+        // 流结束：用 done 的元数据 + 累积的答案，渲染完整回答（含来源/反思提示）
+        const d = Object.assign({ answer: answerText }, doneData || {});
+        bub.innerHTML = renderAnswer(q, d, useWeb);
         loading.scrollIntoView({ behavior: "smooth", block: "end" });
       } catch (e) {
-        loading.querySelector(".bubble-bot").innerHTML = '<div style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
+        bub.innerHTML = '<div style="color:#c0392b">出错了：' + esc(e.message) + '</div>';
       } finally {
         $("ask").disabled = false; $("q").focus();
       }
