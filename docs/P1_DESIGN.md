@@ -51,3 +51,4 @@ question → retrieve_internal → fuse → answer → END
 - 复合问诊（一问多面）只检索一次会漏 → [P2 Planning](P2_DESIGN.md)。
 - 教材是稳定知识、缺时效 → [P3 知识融合](P3_DESIGN.md) 接外部 Web。
 - 证据不足时不会自救 → [P4 Reflection](P4_DESIGN.md)。
+

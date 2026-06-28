@@ -38,6 +38,10 @@ from vectordb import get_client
 # ---- 单例：本地落盘模式下多开 QdrantClient 会抢文件锁，全程共用一个 ----
 _CLIENT = None
 _EMB = None
+# 候选池过滤（子集实验：只在 source_id < N 的段落里检索，公平对比不同切分）
+_FILTER = None
+# 命中匹配粒度："chunk"=(source_id,chunk_id)；"source"=只看 source_id（跨切分稳定）
+_MATCH = "chunk"
 
 
 def _client():
@@ -67,6 +71,7 @@ def dense_recall(query: str, recall: int = RECALL_K) -> list[dict]:
         query=_emb().embed_query(query),
         using=DENSE_VECTOR_NAME,
         limit=recall,
+        query_filter=_FILTER,
         with_payload=True,
     ).points
     return [_payload_to_cand(h.payload) for h in hits]
@@ -86,6 +91,7 @@ def hybrid_recall(query: str, recall: int = RECALL_K) -> list[dict]:
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         limit=recall,
+        query_filter=_FILTER,
         with_payload=True,
     ).points
     return [_payload_to_cand(h.payload) for h in hits]
@@ -110,7 +116,17 @@ METHODS = {
 # ---------- 指标 ----------
 
 def _k(c: dict) -> tuple:
+    # source 模式只看段落号（跨切分稳定）；chunk 模式精确到 (段落, 块)
+    if _MATCH == "source":
+        return (c["source_id"],)
     return (c["source_id"], c["chunk_id"])
+
+
+def _gold_keys(gold: list) -> set:
+    """把金标 [[sid,cid],...] 按当前匹配粒度转成 key 集合。"""
+    if _MATCH == "source":
+        return {(sid,) for sid, _cid in gold}
+    return {(sid, cid) for sid, cid in gold}
 
 
 def metrics_at_k(ranked: list[dict], gold: set, k: int) -> tuple[float, float, float]:
@@ -132,20 +148,36 @@ def main() -> None:
     parser.add_argument("--gold", required=True, help="金标 JSON：[{question, gold:[[sid,cid]]}]")
     parser.add_argument("--recall", type=int, default=RECALL_K, help="每路召回条数")
     parser.add_argument("--k", type=int, nargs="+", default=[1, 3, 5, 10], help="评测的 k 值")
+    parser.add_argument("--match", choices=["chunk", "source"], default="chunk",
+                        help="命中匹配粒度：chunk=(段落,块)；source=只看段落号（跨切分公平对比用）")
+    parser.add_argument("--max-source", type=int, default=None,
+                        help="子集实验：只在 source_id < N 的段落里检索，且只评金标段落 <N 的题")
+    parser.add_argument("--json", action="store_true",
+                        help="额外输出一行机器可读结果（供 run_chunk_eval.py 解析）")
     args = parser.parse_args()
+
+    global _FILTER, _MATCH
+    _MATCH = args.match
+    if args.max_source is not None:
+        _FILTER = models.Filter(must=[models.FieldCondition(
+            key="source_id", range=models.Range(lt=args.max_source))])
 
     with open(args.gold, encoding="utf-8") as f:
         data = json.load(f)
     items = [d for d in data if d.get("question") and d.get("gold")]
+    if args.max_source is not None:
+        # 候选池被限到 <N，金标段落 ≥N 的题永远召不回 → 一并剔除，保证公平
+        items = [d for d in items if all(sid < args.max_source for sid, _ in d["gold"])]
     ks = [k for k in sorted(set(args.k)) if k <= args.recall]
-    print(f"评测集 {len(items)} 题（已过滤无金标的）；recall={args.recall}；k={ks}\n")
+    sub = f"；候选池+题目限 source_id<{args.max_source}" if args.max_source else ""
+    print(f"评测集 {len(items)} 题；匹配粒度={_MATCH}；recall={args.recall}；k={ks}{sub}\n")
 
     # 累加器：{method: {k: [hit_sum, recall_sum, mrr_sum]}}
     agg = {m: {k: [0.0, 0.0, 0.0] for k in ks} for m in METHODS}
 
     for i, item in enumerate(items, 1):
         q = item["question"]
-        gold = {(sid, cid) for sid, cid in item["gold"]}
+        gold = _gold_keys(item["gold"])
         for m, fn in METHODS.items():
             try:
                 ranked = fn(q, recall=args.recall)
@@ -161,16 +193,23 @@ def main() -> None:
             print(f"  已评 {i}/{len(items)}...")
 
     n = len(items)
+    results = {m: {} for m in METHODS}
     print("\n" + "=" * 64)
     print(f"{'方法':<16}{'k':>4}{'Hit@k':>10}{'Recall@k':>12}{'MRR@k':>10}")
     print("-" * 64)
     for m in METHODS:
         for k in ks:
             h, r, rr = (s / n for s in agg[m][k])
+            results[m][k] = {"hit": h, "recall": r, "mrr": rr}
             print(f"{m:<16}{k:>4}{h:>10.3f}{r:>12.3f}{rr:>10.3f}")
         print("-" * 64)
     print("解读：三种方式同一 k 横向比，越往下（加 sparse、加 rerank）指标应越高，"
           "即可量化「混合检索 / 重排」各自的增益。")
+
+    if args.json:
+        # 单独一行、带前缀，便于上层脚本从混合输出里稳妥抠出
+        print("__RESULTS_JSON__" + json.dumps(
+            {"n": n, "match": _MATCH, "ks": ks, "results": results}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
