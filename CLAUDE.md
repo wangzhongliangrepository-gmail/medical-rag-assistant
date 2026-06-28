@@ -34,7 +34,7 @@ invoke 传 `config={"configurable": {"thread_id": session_id, "user_id": user_id
 ## 四大支柱 → LangGraph 映射
 
 - **Planning**：`plan` 节点把复合问诊**平行拆解**成 1-3 个方面子问题（机理 / 用药 / 副作用…）。
-  桥接型（后一跳依赖前一跳答案）的链式精化设计见 `docs/P2_5_DESIGN.md`。
+  （桥接型——后一跳依赖前一跳答案——的链式精化暂未实现。）
 - **Tool Use**：内部混合检索（`kb_search`：BGE 向量 + BM25 + RRF + 重排）+ 外部 Tavily（`external`）。
 - **Memory（已实现 P5）**：短期 `InMemorySaver`（checkpointer，按 thread_id）撑会话内多轮，
   `contextualize` 节点做指代消解；长期 `InMemoryStore`（BGE 语义检索，按 user_id namespace），
@@ -94,7 +94,7 @@ Dockerfile / docker-compose.yml / .dockerignore   容器化
 ## 评测
 
 医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge**
-评答案质量。见 `docs/P1_DESIGN.md`、`docs/HYBRID_RETRIEVAL_EVIDENCE.md`。
+评答案质量。检索评测脚本见 `eval_retrieval.py`（金标集由 `gen_eval_set.py` 生成）。
 
 ## 约定
 
