@@ -196,7 +196,9 @@ def plan(state: MedState, config: RunnableConfig) -> dict:
         ("human", _PLAN_PROMPT.format(question=question)),
     ])
     subs = result.questions or [question]
-    return {"plan_questions": subs, "sub_questions": subs}
+    # past_queries 每轮在此重置（覆盖上一轮残留）：以 hop1 的子问题为轨迹起点，
+    # 后续 augment 的补检索查询会接着往后追加，供 reflect 去重。
+    return {"plan_questions": subs, "sub_questions": subs, "past_queries": list(subs)}
 
 
 # ---------- 内部源：Qdrant 医疗教材库 ----------
@@ -302,14 +304,25 @@ _REFLECT_PROMPT = """你是严格的医疗质检员。判断「当前资料」�
 
 当前答案：{answer}
 
+本轮已经检索过的查询（**不要重复、也不要近似重复**下面任何一条）：
+{past}
+
 判断规则：
 - sufficient=true：资料已覆盖问题的关键方面，答案基本可信、无明显遗漏关键安全信息。
-- sufficient=false：资料缺少回答所必需的某个关键方面（如只讲了副作用却没有禁忌/相互作用），
-  或缺少与用户健康背景相关的安全信息。
+- sufficient=false，分两种缺口：
+  ① 并列缺口：缺回答所必需的某个关键方面（如只讲了副作用却没有禁忌/相互作用），
+     或缺与用户健康背景相关的安全信息。
+  ② 桥接缺口（多跳）：要回答必须先据当前资料里**新发现的中间实体**再查一步。
+     例：问「治这种病的一线药有什么副作用」，当前资料刚指出一线药是『二甲双胍』，
+     但还没有二甲双胍副作用的资料——这就是桥接缺口。
 
 【重要】不要因为「还能更详尽」就判 false；只有缺少**关键**信息时才判 false。
-若 sufficient=false，missing 必须是一个**具体的补充检索查询**（含药名/方面），
-不能是对原问题的复述。示例：✓「二甲双胍的禁忌症和用药注意」 ✗「还有什么要补充的」
+若 sufficient=false，missing 必须是一个**具体的补充检索查询**：
+- 用**明确的实体名**（药名/疾病名/指标），不要复述原问题、不要用「它/该药」等指代；
+- 若是桥接缺口，**把当前资料里新发现的实体代进去**写成下一跳查询。
+  示例：✓「二甲双胍的副作用和禁忌」（已用上发现的实体）　✗「那它的副作用」「还要补充什么」
+- 若你能想到的补充查询和上面「已检索过的查询」实质相同 → 说明已无新信息可补 →
+  应判 sufficient=true 收尾，**别让系统原地打转**。
 
 输出 JSON：{{"sufficient": true/false, "reasoning": "一句话理由", "missing": "（不足时必填）具体补充检索查询"}}"""
 
@@ -325,11 +338,14 @@ def reflect(state: MedState, config: RunnableConfig) -> dict:
     question = state.get("standalone_question") or state["question"]
     ev = state.get("evidence") or []
     context = "\n\n".join(f"[{i + 1}]（{e['source']}）{e['text']}" for i, e in enumerate(ev)) or "（无）"
+    past = state.get("past_queries") or []
+    past_text = "\n".join(f"- {q}" for q in past) or "（无）"
     structured = _llm(config).with_structured_output(ReflectResult, method="json_mode")
     try:
         result = structured.invoke([
             ("system", '你是医疗质检员，只输出合法 JSON，格式：{"sufficient": bool, "reasoning": "...", "missing": "..."}'),
-            ("human", _REFLECT_PROMPT.format(question=question, context=context, answer=state["answer"])),
+            ("human", _REFLECT_PROMPT.format(question=question, context=context,
+                                             answer=state["answer"], past=past_text)),
         ])
     except Exception as e:
         print(f"[warn] 反思失败，视为充分：{type(e).__name__}: {e}")
@@ -342,11 +358,15 @@ def reflect(state: MedState, config: RunnableConfig) -> dict:
 
 
 def route_after_reflect(state: MedState) -> str:
-    """充分或达上限 → 收尾；否则 → 补检索重答。"""
+    """充分 / 达上限 / 查询重复 → 收尾；否则 → 补检索重答。"""
     from config import MAX_REVISIONS
-    if not state.get("missing_info"):
+    miss = (state.get("missing_info") or "").strip()
+    if not miss:
         return "extract_memory"
     if state.get("revisions", 0) >= MAX_REVISIONS:
+        return "extract_memory"
+    # 确定性兜底：即便模型仍提了重复查询（prompt 没拦住），也别再去查同一个、原地打转
+    if miss in {q.strip() for q in (state.get("past_queries") or [])}:
         return "extract_memory"
     return "augment_retrieve"
 
@@ -363,7 +383,7 @@ def augment_retrieve(state: MedState) -> dict:
             seen_int.add(e["text"])
             internal.append({"text": e["text"], "source": f"内部·教材#{e['source_id']}"})
 
-    out = {"internal_evidence": internal}
+    out: dict = {"internal_evidence": internal}
 
     # 若本轮开了联网，外部也补一路
     if state.get("use_external"):
@@ -379,6 +399,8 @@ def augment_retrieve(state: MedState) -> dict:
             print(f"[warn] 反思补检索外部失败，仅补内部：{type(e).__name__}: {e}")
         out["external_evidence"] = external
 
+    # 记录本跳用过的补检索查询，追加进轨迹，供下一次 reflect 去重
+    out["past_queries"] = (state.get("past_queries") or []) + [miss]
     return out
 
 

@@ -27,3 +27,6 @@ class MedState(TypedDict):
     revisions: int                   # 已反思次数，硬上限 MAX_REVISIONS
     reflection: str                  # 最近一次反思理由
     missing_info: str                # 反思指出缺少的补充检索查询（空=证据充分）
+    # 本轮已用过的检索查询（plan 子问题 + 每跳 augment 的补检索查询），供 reflect 去重防打转。
+    # 普通字段、不用 reducer：每轮由 plan 重置覆盖，不跨会话累积。
+    past_queries: list[str]
