@@ -147,7 +147,57 @@ Recall 回答「**答案捞回来了吗**」，MRR 回答「**排得够靠前吗
 
 ---
 
-## 6. 复现
+## 6. 答案层评测：LLM-judge + 反思 on/off 消融
+
+检索层之外的另一半：整图产出的**回答**质量，由 [`eval/eval_answer.py`](../eval/eval_answer.py)
+做 **reference-free** 的 LLM-as-judge——裁判**只对照本次检索到的证据**评判，不引入自身医学知识
+（否则会把「证据没提、但模型知道」误判成幻觉/遗漏）。四维各 1–5：忠实度（防幻觉）、引用正确性、
+完整性、安全合规。判官用 `deepseek-v4-pro`，金标问题取 `eval_set_draft.json` 的 50 题。
+
+### 6.1 评测先抓出一个合规 bug：免责声明缺失
+
+首跑 reflect=ON，safety 仅 **3.54**（其余三维 ~4.88），50 题里 33 题因「无免责声明」被扣到 3 分。
+根因：免责声明原只在 CLI 层打印时拼接，**图产出的 `state["answer"]` 不带**——Web/API 与评测读到的
+都是裸答案，且 Web 用户实际收不到声明。改为在 `answer` 节点**确定性追加** DISCLAIMER（不靠 LLM 自觉），
+CLI / Web / 评测三面统一。复测 safety **3.54 → 5.00**，综合 4.54 → ~4.9。**评测的价值正在于此**。
+
+### 6.2 反思 on/off 消融（同环境：Docker 库 + 免责修复后）
+
+| 维度 | reflect ON | reflect OFF | Δ(ON−OFF) |
+|---|---|---|---|
+| faithfulness | 4.92 | 4.86 | +0.06 |
+| citation | 4.86 | 4.92 | −0.06 |
+| completeness | 4.86 | 4.90 | −0.04 |
+| safety | 5.00 | 5.00 | 0 |
+| **综合** | **4.91** | **4.92** | **−0.01** |
+| 平均延迟 | 34.64 s | 28.88 s | **+5.76 s（+20%）** |
+| 反思触发（revisions>1） | 5/50 | 0/50 | — |
+
+均值上**质量持平（−0.01，在噪声内）、延迟多 20%**。但均值会骗人——真相在那 5 道触发题。
+
+### 6.3 逐题挖：反思只在「首检索不够」的少数题上起效
+
+把 ON 里触发反思（revisions>1）的 5 题与 OFF 同题对比：
+
+| 触发题 | OFF→ON 综合 | 维度变化 |
+|---|---|---|
+| 孕妇感冒慎用哪些药 | **4.25 → 5.00（+0.75）** | faithfulness 3→5、citation 4→5 |
+| 某药预防运动相关 | 5.00 → 4.75（−0.25） | faithfulness 5→4（多塞证据轻微跑偏）|
+| 其余 3 题 | 5.00 → 5.00 | 反思触发但证据未改变答案（空转）|
+
+净效果 **1 大赢 + 1 小输 + 3 空转 = +0.50 / 50 ≈ +0.01**，所以被均值冲平。
+
+**结论：**
+- 反思是个**安全网**：在「孕妇感冒慎用药」这类**安全敏感 + 多方面**、首检索证据不足的题上，把
+  faithfulness 从 3 救到 5——这是它 work 的实证；但也有**过取证据轻微跑偏**的代价 + 全员 +20% 延迟。
+- **均值照不出价值**，因为这套金标只有 ~1 道真正够硬的题 → 直接坐实下一步：**加多跳/欠定难题**才能
+  在均值上量化反思（与后续链式精化）的收益。
+- **产品判断**：医疗风险不对称——接住 1 个会答错的安全敏感问题，价值远大于 +6 秒延迟，故**生产仍保留
+  反思 ON**，均值持平不构成关掉它的理由。
+
+---
+
+## 7. 复现
 
 ```bash
 # 评测脚本都在 eval/，从仓库根运行
@@ -158,15 +208,20 @@ python eval/run_chunk_eval.py --skip-ingest
 # 单库三方式评测
 python eval/eval_retrieval.py --gold eval/data/eval_set_draft.json --match source --k 1 3 5 10
 
+# 答案层 LLM-judge + 反思 on/off 消融（含每题 latency_s / revisions）
+python eval/eval_answer.py --out eval/data/ans_reflect_on.json              # 反思 ON
+python eval/eval_answer.py --no-reflect --out eval/data/ans_reflect_off.json # 对照 OFF
+
 # sparse 修复后重建索引（只更新 sparse，不动 dense）
 QDRANT_PATH=./qdrant_db QDRANT_COLLECTION=medical_kb python reindex_sparse.py
 ```
 
 > 前置：Xinference 开着（dense 向量化 + 重排走 GPU）；sparse/BM25 与 jieba 跑 CPU。
 
-## 7. 后续
+## 8. 后续
 
-- **答案层 LLM-judge**：忠实度 / 完整性 / 引用规范，量化结构切分「答案更完整」的真实收益。
-- **多跳桥接评测**：金标改为「一对有依赖关系的 chunk」，用 `use_reflect` 开关做 A/B 消融，
-  量化反思回路对桥接多跳的增益。
+- ~~**答案层 LLM-judge**~~：✅ 已完成（见 §6）。顺带抓出免责声明合规 bug 并修复（safety 3.54→5.00）。
+- **多跳桥接评测**（当前最优先）：§6.3 证明反思的收益集中在极少数「首检索不够」的难题上，被单跳金标
+  的均值冲平。下一步把金标改为「一对有依赖关系的 chunk」，用 `use_reflect` 开关做 A/B，量化反思
+  （及后续链式精化）对桥接多跳的真实增益。
 - **扩集 + 人工审**：把 16/50 的 n 提上去，压住「一题翻盘」的噪声。

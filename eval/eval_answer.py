@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 import json
+import time
 import uuid
 
 from pydantic import BaseModel
@@ -74,13 +75,16 @@ class JudgeResult(BaseModel):
     reasoning: str = ""
 
 
-def run_answer(graph, question: str, use_external: bool) -> tuple[str, list[dict]]:
-    """跑完整图拿最终回答与证据；每题独立 thread_id，互不污染。"""
+def run_answer(graph, question: str, use_external: bool) -> tuple[str, list[dict], int, float]:
+    """跑完整图拿最终回答与证据；每题独立 thread_id，互不污染。
+    额外返回 revisions（反思补检索轮次，>1 即真正触发重答）与墙钟延迟（秒）。"""
+    t0 = time.perf_counter()
     state = graph.invoke(
         {"question": question, "use_external": use_external},
         config={"configurable": {"thread_id": uuid.uuid4().hex, "user_id": f"eval-{uuid.uuid4().hex[:8]}"}},
     )
-    return state.get("answer", ""), state.get("evidence", []) or []
+    latency = time.perf_counter() - t0
+    return state.get("answer", ""), state.get("evidence", []) or [], state.get("revisions", 0), latency
 
 
 def judge_once(judge, question: str, answer: str, evidence: list[dict]) -> JudgeResult | None:
@@ -127,16 +131,22 @@ def main() -> None:
     rows: list[dict] = []
     agg = {d: 0.0 for d in _DIMS}
     scored = 0
+    total_latency = 0.0
+    triggered = 0  # revisions>1 的题数：反思真正补检索重答（off 臂恒为 0）
     for i, q in enumerate(questions, 1):
-        answer, evidence = run_answer(graph, q, args.use_external)
+        answer, evidence, revisions, latency = run_answer(graph, q, args.use_external)
         r = judge_once(judge, q, answer, evidence)
         if r is None:
             continue
         scored += 1
+        total_latency += latency
+        if revisions > 1:
+            triggered += 1
         for d in _DIMS:
             agg[d] += getattr(r, d)
         rows.append({
             "question": q, "answer": answer, "n_evidence": len(evidence),
+            "revisions": revisions, "latency_s": round(latency, 2),
             **{d: getattr(r, d) for d in _DIMS}, "reasoning": r.reasoning,
         })
         if i % 5 == 0:
@@ -154,9 +164,14 @@ def main() -> None:
         print(f"{_DIM_CN[d] + ' ' + d:<16}{agg[d] / scored:>12.2f}")
     print("-" * 56)
     print(f"{'综合(四维均值)':<16}{sum(agg.values()) / (scored * len(_DIMS)):>12.2f}")
+    print("-" * 56)
+    print(f"{'平均延迟(秒/题)':<16}{total_latency / scored:>12.2f}")
+    print(f"{'反思触发':<16}{f'{triggered}/{scored} 题':>12}"
+          + ("  (revisions>1，真正补检索重答)" if use_reflect else "  (已关反思)"))
     print("=" * 56)
     print("注：reference-free（只对照检索证据评判，不引入裁判自身医学知识）；"
           "消融对比用 --no-reflect 跑对照再比这张表。")
+    print("延迟为墙钟时间，受 API 网络波动影响，仅作同环境下 on/off 相对比较。")
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
@@ -164,6 +179,8 @@ def main() -> None:
                 "config": {"reflect": use_reflect, "external": args.use_external,
                            "judge_model": args.judge_model, "n": scored},
                 "averages": {d: agg[d] / scored for d in _DIMS},
+                "avg_latency_s": round(total_latency / scored, 2),
+                "reflect_triggered": triggered,
                 "rows": rows,
             }, f, ensure_ascii=False, indent=2)
         print(f"\n逐题明细已写入：{args.out}")
