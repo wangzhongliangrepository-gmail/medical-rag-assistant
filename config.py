@@ -64,3 +64,11 @@ ENTITY_HINT_K = int(os.getenv("ENTITY_HINT_K", "5"))         # 指代消解时�
 # --- 反思---
 # answer 后自判证据是否充分，不足则补检索重答；硬上限防死循环（医疗克制，最多补检索 1 次）。
 MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "2"))
+
+# --- 安全合规 ---
+# 强制免责声明：医疗高风险，对外一律附。在 answer 节点确定性追加进 state["answer"]，
+# 保证 CLI / Web / 评测三个输出面都带上（别靠 LLM 自觉，它不可靠）。
+DISCLAIMER = os.getenv(
+    "DISCLAIMER",
+    "⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。",
+)

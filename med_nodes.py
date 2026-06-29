@@ -14,6 +14,7 @@ from langgraph.store.base import BaseStore
 from pydantic import BaseModel
 
 from config import (
+    DISCLAIMER,
     ENTITY_HINT_K,
     FUSE_TOP_K,
     HISTORY_WINDOW,
@@ -277,7 +278,7 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
     ev = state["evidence"]
     if not ev:
         # history 不在此写：反思可能让 answer 多次执行，统一由收尾节点 extract_memory 记最终答
-        return {"answer": "根据现有资料无法回答（未检索到相关内容）。"}
+        return {"answer": f"根据现有资料无法回答（未检索到相关内容）。\n\n{DISCLAIMER}"}
     context = "\n\n".join(
         f"[{i + 1}]（{e['source']}）{e['text']}" for i, e in enumerate(ev)
     )
@@ -290,7 +291,8 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
         ("system", _SYSTEM),
         ("human", _ANSWER_PROMPT.format(memory_block=memory_block, context=context, question=question)),
     ])
-    return {"answer": msg.content.strip()}
+    # 确定性追加免责声明：医疗高风险强制合规，不依赖 LLM 自觉（CLI/Web/评测三面统一带上）
+    return {"answer": f"{msg.content.strip()}\n\n{DISCLAIMER}"}
 
 
 # ---------- 反思：自判证据是否充分（P4 反思回路）----------

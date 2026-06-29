@@ -13,7 +13,7 @@ import uuid
 
 from med_graph import get_med_graph
 
-DISCLAIMER = "⚠️ 本回答仅供学习演示，非医疗建议；如有健康问题请咨询专业医师。"
+# 免责声明已由 answer 节点确定性追加进 result["answer"]（CLI/Web/评测三面统一），此处不再重复拼。
 
 
 def _print_result(question: str, result: dict, show_sources: bool = True) -> None:
@@ -57,7 +57,6 @@ def run_chat(graph, use_external: bool, model_tier: str = "flash") -> None:
             break
         result = graph.invoke({"question": q, "use_external": use_external}, config=config)
         _print_result(q, result, show_sources=False)
-    print(f"\n{DISCLAIMER}")
 
 
 def main() -> None:
@@ -92,7 +91,6 @@ def main() -> None:
     for sq in result.get("plan_questions", []):
         print(f"  - {sq}")
     _print_result(args.question, result, show_sources=True)
-    print(f"\n{DISCLAIMER}")
 
 
 if __name__ == "__main__":
