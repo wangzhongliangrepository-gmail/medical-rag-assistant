@@ -3,10 +3,12 @@
 直观展示 dense（语义）与 sparse（词面）召回的是不同的集合，hybrid（RRF）取并集，
 从而召回更全——这是"为什么要混合检索"的实证。
 
-用法：
-  python compare_retrieval.py "氨氯地平的降压机制"
-  python compare_retrieval.py "吃药为什么要按体重调整剂量" --k 5
+用法（从仓库根运行）：
+  python eval/compare_retrieval.py "氨氯地平的降压机制"
+  python eval/compare_retrieval.py "吃药为什么要按体重调整剂量" --k 5
 """
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根入 path，供下方 import 根模块
 import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 

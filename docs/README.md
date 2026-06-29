@@ -32,9 +32,9 @@
 
 完整方法论、切分 A/B 消融、以及一次**混合检索静默退化**的排查与修复，见 **[EVAL](EVAL.md)**。
 
-- **检索 recall@k / MRR**：`eval_retrieval.py`（金标集由 `gen_eval_set.py` 生成）——金标 chunk 是否被召回、排得够不够前。
-- **切分 A/B + 逐层消融**：`run_chunk_eval.py`（dense → hybrid → rerank）。
-- **混合 vs 纯 dense 对比**：`compare_retrieval.py`。
+- **检索 recall@k / MRR**：`eval/eval_retrieval.py`（金标集由 `eval/gen_eval_set.py` 生成）——金标 chunk 是否被召回、排得够不够前。
+- **切分 A/B + 逐层消融**：`eval/run_chunk_eval.py`（dense → hybrid → rerank）。
+- **混合 vs 纯 dense 对比**：`eval/compare_retrieval.py`。
 - **答案质量**：医疗答复是开放长文本、EM/F1 失效，用 **LLM-as-judge** 评「忠于证据 / 引用对应 / 无幻觉」。
 
 > ⚠️ 本项目仅供学习演示，**非医疗建议**。

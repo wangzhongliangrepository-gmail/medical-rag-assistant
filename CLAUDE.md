@@ -87,14 +87,17 @@ med_graph.py     组装 StateGraph + compile
 med_rag.py       CLI 入口
 server.py        FastAPI 服务（/ /health /chat）
 static/index.html 网页前端
-compare_retrieval.py / dedup_kb.py   检索对比 / 去重工具
+dedup_kb.py / reindex_sparse.py   去重 / sparse 增量重建（jieba 分词后只重算 sparse）工具
+eval/            评测脚本集中：eval_retrieval / run_chunk_eval / gen_eval_set / compare_retrieval + data/ 金标集
 Dockerfile / docker-compose.yml / .dockerignore   容器化
 ```
 
 ## 评测
 
 医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge**
-评答案质量。检索评测脚本见 `eval_retrieval.py`（金标集由 `gen_eval_set.py` 生成）。
+评答案质量。评测脚本集中在 `eval/`（`eval_retrieval.py` 检索评测、`run_chunk_eval.py` 切分对比、
+`gen_eval_set.py` 金标集反向生成、`compare_retrieval.py` 混合对比；金标数据在 `eval/data/`）。
+方法论与排查复盘详见 `docs/EVAL.md`。从仓库根运行：`python eval/run_chunk_eval.py`。
 
 ## 约定
 

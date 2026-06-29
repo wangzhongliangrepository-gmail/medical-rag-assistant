@@ -12,11 +12,13 @@
 ⚠️ 这是「草稿」：① 问题是否自然合理、② 金标是否准确（可能还有别的 chunk 也该算金标）
    都需要你过一遍。审核时可手动往 gold 里补别的 [source_id, chunk_id]。
 
-用法：
-  python gen_eval_set.py --n 50                      # 随机抽 50 个 chunk 生成
-  python gen_eval_set.py --n 50 --min-len 120        # 只用 ≥120 字的 chunk（信息更足）
-  python gen_eval_set.py --n 50 --out my_eval.json
+用法（从仓库根运行）：
+  python eval/gen_eval_set.py --n 50                  # 随机抽 50 个 chunk 生成
+  python eval/gen_eval_set.py --n 50 --min-len 120    # 只用 ≥120 字的 chunk（信息更足）
+  python eval/gen_eval_set.py --n 50 --out eval/data/my_eval.json
 """
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根入 path，供下方 import 根模块
 import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 import json
@@ -63,7 +65,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--n", type=int, default=50, help="生成多少条评测样本")
     parser.add_argument("--min-len", type=int, default=80, help="只用长度 ≥ 此值的 chunk")
-    parser.add_argument("--out", default="eval_set_draft.json", help="输出文件")
+    parser.add_argument(
+        "--out",
+        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "eval_set_draft.json"),
+        help="输出文件（默认 eval/data/eval_set_draft.json）")
     parser.add_argument("--seed", type=int, default=42, help="随机种子（可复现抽样）")
     args = parser.parse_args()
 
@@ -110,7 +115,7 @@ def main() -> None:
         json.dump(rows, f, ensure_ascii=False, indent=2)
     print(f"[3/3] 完成：写入 {len(rows)} 条 → {args.out}")
     print("      ⚠️ 这是草稿，请人工审核：问题是否合理、gold 是否需要补别的 chunk。")
-    print("      审核后用：python eval_retrieval.py --gold " + args.out)
+    print("      审核后用：python eval/eval_retrieval.py --gold " + args.out)
 
 
 if __name__ == "__main__":

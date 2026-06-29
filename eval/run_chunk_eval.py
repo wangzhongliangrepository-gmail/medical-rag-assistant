@@ -9,10 +9,10 @@ medical_kb。两次灌库各用**独立子进程 + 独立 Qdrant 路径**，彼�
   ③/④ 两边各评（source 级匹配，同一批金标段落<N 的题）
   ⑤ 并排打印「旧 vs 新」Recall@k / MRR@k
 
-用法：
-  python run_chunk_eval.py                                       # N=3000，recursive vs structure
-  python run_chunk_eval.py --limit 4000
-  python run_chunk_eval.py --skip-ingest                         # 两子集已灌过，只跑对比
+用法（从仓库根运行）：
+  python eval/run_chunk_eval.py                                  # N=3000，recursive vs structure
+  python eval/run_chunk_eval.py --limit 4000
+  python eval/run_chunk_eval.py --skip-ingest                   # 两子集已灌过，只跑对比
 
 前置：Xinference 开着；这两个独立路径没有别的进程占用。
 （注：本实验不需要、也不会重建全量 medical_kb；想恢复线上库另跑 `python ingest.py --recreate`。）
@@ -23,9 +23,16 @@ import os
 import subprocess
 import sys
 
-NEW_PATH = "./qdrant_db_v2"        # 新切分独立落盘路径
+_HERE = os.path.dirname(os.path.abspath(__file__))   # eval/ 目录
+_ROOT = os.path.dirname(_HERE)                        # 仓库根（脚本搬进 eval/ 后，据此锚定根目录的 ingest.py / 落盘库）
+_EVAL_RETRIEVAL = os.path.join(_HERE, "eval_retrieval.py")   # 同目录的评测脚本
+_INGEST = os.path.join(_ROOT, "ingest.py")                   # 仓库根的灌库脚本
+_DEFAULT_GOLD = os.path.join(_HERE, "data", "eval_set_draft.json")
+
+# 子集实验落盘路径锚定到仓库根（不随 CWD 变），与线上 qdrant_db 隔离
+NEW_PATH = os.path.join(_ROOT, "qdrant_db_v2")     # 新切分独立落盘路径
 NEW_COLL = "medical_kb_v2"
-BASE_PATH = "./qdrant_db_base"     # 旧切分独立落盘路径（不是线上 qdrant_db！）
+BASE_PATH = os.path.join(_ROOT, "qdrant_db_base")  # 旧切分独立落盘路径（不是线上 qdrant_db！）
 BASE_COLL = "medical_kb_base"
 RESULT_PREFIX = "__RESULTS_JSON__"
 
@@ -55,7 +62,7 @@ def _parse_results(stdout: str) -> dict:
 
 def _eval(path: str, coll: str, gold: str, limit: int, recall: int, ks: list[int]) -> dict:
     out = _run(
-        [sys.executable, "eval_retrieval.py", "--gold", gold,
+        [sys.executable, _EVAL_RETRIEVAL, "--gold", gold,
          "--match", "source", "--max-source", str(limit),
          "--recall", str(recall), "--k", *map(str, ks), "--json"],
         {"QDRANT_PATH": path, "QDRANT_COLLECTION": coll}, capture=True)
@@ -64,7 +71,7 @@ def _eval(path: str, coll: str, gold: str, limit: int, recall: int, ks: list[int
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--gold", default="eval_set_draft.json")
+    p.add_argument("--gold", default=_DEFAULT_GOLD)
     p.add_argument("--limit", type=int, default=3000, help="子集：前 N 段落")
     p.add_argument("--recall", type=int, default=20)
     p.add_argument("--k", type=int, nargs="+", default=[1, 3, 5, 10])
@@ -79,11 +86,11 @@ def main() -> None:
     # ①② 各建一个 N 段落子集到独立路径（绝不碰线上 medical_kb）
     if not args.skip_ingest:
         print(f"[①] baseline 切分 {args.baseline_strategy} 灌前 {args.limit} 段落 → {BASE_PATH}/{BASE_COLL}")
-        _run([sys.executable, "ingest.py", "--recreate",
+        _run([sys.executable, _INGEST, "--recreate",
               "--limit", str(args.limit), "--strategy", args.baseline_strategy],
              {"QDRANT_PATH": BASE_PATH, "QDRANT_COLLECTION": BASE_COLL}, capture=False)
         print(f"\n[②] 新切分 {args.strategy} 灌前 {args.limit} 段落 → {NEW_PATH}/{NEW_COLL}")
-        _run([sys.executable, "ingest.py", "--recreate",
+        _run([sys.executable, _INGEST, "--recreate",
               "--limit", str(args.limit), "--strategy", args.strategy],
              {"QDRANT_PATH": NEW_PATH, "QDRANT_COLLECTION": NEW_COLL}, capture=False)
 

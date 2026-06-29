@@ -48,8 +48,8 @@ query ──┬─ dense  Prefetch(limit=20) ─┐
 
 ## 验证
 
-- `eval_retrieval.py`：金标集（`gen_eval_set.py` 生成）算 **recall@k**——金标 chunk 是否被召回。
-- `compare_retrieval.py`：混合检索 vs 纯 dense 的同查询对比，直观看 sparse 补了哪些专有名词命中。
+- `eval/eval_retrieval.py`：金标集（`eval/gen_eval_set.py` 生成）算 **recall@k**——金标 chunk 是否被召回。
+- `eval/compare_retrieval.py`：混合检索 vs 纯 dense 的同查询对比，直观看 sparse 补了哪些专有名词命中。
 - CLI 直查：`python kb_search.py "氨氯地平能降血压吗" --topk 5`。
 
 ## 待办

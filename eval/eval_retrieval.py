@@ -15,10 +15,12 @@
 金标文件格式（gen_eval_set.py 产出、人工审核后）：
   [{"question": "...", "gold": [[source_id, chunk_id], ...]}, ...]
 
-用法：
-  python eval_retrieval.py --gold eval_set_draft.json
-  python eval_retrieval.py --gold eval_set.json --k 1 3 5 10
+用法（从仓库根运行）：
+  python eval/eval_retrieval.py --gold eval/data/eval_set_draft.json
+  python eval/eval_retrieval.py --gold eval/data/eval_set_draft.json --k 1 3 5 10
 """
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 仓库根入 path，供下方 import 根模块
 import _bootstrap  # noqa: F401  必须最先导入：放行 OpenMP 重复加载
 import argparse
 import json

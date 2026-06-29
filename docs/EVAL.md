@@ -4,9 +4,9 @@
 **混合检索静默退化** bug。整体定位见根目录 [README](../README.md)、演进路线见
 [设计文档索引](README.md)。
 
-> 评测脚本：[`eval_retrieval.py`](../eval_retrieval.py)（三方式指标）、
-> [`run_chunk_eval.py`](../run_chunk_eval.py)（切分 A/B 一键对比）、
-> [`gen_eval_set.py`](../gen_eval_set.py)（金标集反向生成）。
+> 评测脚本集中在 [`eval/`](../eval/)：[`eval_retrieval.py`](../eval/eval_retrieval.py)（三方式指标）、
+> [`run_chunk_eval.py`](../eval/run_chunk_eval.py)（切分 A/B 一键对比）、
+> [`gen_eval_set.py`](../eval/gen_eval_set.py)（金标集反向生成）；金标数据在 [`eval/data/`](../eval/data/)。
 
 ---
 
@@ -35,7 +35,7 @@ Recall 回答「**答案捞回来了吗**」，MRR 回答「**排得够靠前吗
 
 ## 3. 评测集设计
 
-**反向生成**（[`gen_eval_set.py`](../gen_eval_set.py)）：从库里挑一个 chunk → 让 LLM 生成
+**反向生成**（[`gen_eval_set.py`](../eval/gen_eval_set.py)）：从库里挑一个 chunk → 让 LLM 生成
 「这段能回答的问题」→ 这段天然就是该问题的金标。批量生成后**人工审核**。
 
 - 金标用 `(source_id, chunk_id)` 唯一标识：`source_id` = 教材原始段落号，`chunk_id` = 切分后第几块。
@@ -49,7 +49,7 @@ Recall 回答「**答案捞回来了吗**」，MRR 回答「**排得够靠前吗
 
 ## 4. 切分策略 A/B + 逐层消融
 
-[`run_chunk_eval.py`](../run_chunk_eval.py) 做一个**自给自足、与线上库隔离**的子集实验：取前
+[`run_chunk_eval.py`](../eval/run_chunk_eval.py) 做一个**自给自足、与线上库隔离**的子集实验：取前
 **3000 个源段落**（切分**之前**的教材原始段落），分别用 `recursive`（递归字符切分）和
 `structure`（按【小节】标题结构切分）各灌一个独立小库，再对**同一批**金标（限定金标
 `source_id < 3000`，共 16 题）评测。`--max-source 3000` 同时约束候选池与题目，保证两种
@@ -150,12 +150,13 @@ Recall 回答「**答案捞回来了吗**」，MRR 回答「**排得够靠前吗
 ## 6. 复现
 
 ```bash
+# 评测脚本都在 eval/，从仓库根运行
 # 切分 A/B + 逐层消融（首次会建两个 3000 段子集；已建过加 --skip-ingest）
-python run_chunk_eval.py
-python run_chunk_eval.py --skip-ingest
+python eval/run_chunk_eval.py
+python eval/run_chunk_eval.py --skip-ingest
 
 # 单库三方式评测
-python eval_retrieval.py --gold eval_set_draft.json --match source --k 1 3 5 10
+python eval/eval_retrieval.py --gold eval/data/eval_set_draft.json --match source --k 1 3 5 10
 
 # sparse 修复后重建索引（只更新 sparse，不动 dense）
 QDRANT_PATH=./qdrant_db QDRANT_COLLECTION=medical_kb python reindex_sparse.py

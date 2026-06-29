@@ -158,8 +158,9 @@ docs/            逐阶段设计文档 P0→P6（见 docs/README.md）+ 演示�
 
 ## 📝 评测
 
-医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量，
-见 `eval_retrieval.py`。**逐阶段设计文档（P0→P6）见 [`docs/`](docs/README.md)**，讲清每层的目标与设计取舍。
+医疗答复是开放长文本，EM/F1 失效。用**检索 recall@k / MRR**（金标 chunk 是否召回）+ **LLM-as-judge** 评答案质量，
+评测脚本集中在 [`eval/`](eval/)，方法论与排查复盘见 [`docs/EVAL.md`](docs/EVAL.md)。
+**逐阶段设计文档（P0→P6）见 [`docs/`](docs/README.md)**，讲清每层的目标与设计取舍。
 
 ## 📄 License
 
