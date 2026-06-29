@@ -32,10 +32,12 @@ RESULT_PREFIX = "__RESULTS_JSON__"
 
 def _run(cmd: list[str], env_overrides: dict, capture: bool) -> str:
     """跑子进程；env_overrides 覆盖 QDRANT_PATH/QDRANT_COLLECTION 等做隔离。"""
-    env = dict(os.environ, **env_overrides)
+    # 强制子进程用 UTF-8 输出，否则中文 Windows 默认走 GBK，父进程按 utf-8 读会 UnicodeDecodeError
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", **env_overrides)
     print(f"  $ {' '.join(cmd)}   [{env_overrides}]")
     if capture:
-        p = subprocess.run(cmd, env=env, capture_output=True, text=True, encoding="utf-8")
+        p = subprocess.run(cmd, env=env, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         if p.returncode != 0:
             print(p.stdout); print(p.stderr)
             raise SystemExit(f"子进程失败：{cmd}")
