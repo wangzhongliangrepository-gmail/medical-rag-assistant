@@ -13,7 +13,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # 模型 ID：
 #   deepseek-v4-flash —— 快、便宜，支持工具调用与结构化输出（默认，大多数节点用它）
 #   deepseek-v4-pro   —— 更强推理/编码/长上下文（planner、reflect 等难节点可选）
-# 注意：deepseek-chat / deepseek-reasoner 这两个旧别名 2026-07-24 停用，新项目别用。
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # 必填
 LLM_FLASH = os.getenv("LLM_FLASH", "deepseek-v4-flash")
 LLM_PRO   = os.getenv("LLM_PRO",   "deepseek-v4-pro")

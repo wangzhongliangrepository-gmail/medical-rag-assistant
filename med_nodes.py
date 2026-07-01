@@ -287,12 +287,19 @@ def answer(state: MedState, config: RunnableConfig) -> dict:
         "\n用户健康背景（来自长期记忆，作答务必纳入考虑）：\n"
         + "\n".join(f"- {m}" for m in mem) + "\n"
     ) if mem else ""
-    msg = llm.invoke([
+    messages = [
         ("system", _SYSTEM),
         ("human", _ANSWER_PROMPT.format(memory_block=memory_block, context=context, question=question)),
-    ])
+    ]
+    text = llm.invoke(messages).content.strip()
+    if not text:
+        # DeepSeek（推理模型）偶发把输出全留在 reasoning_content、让 .content 为空；
+        # 不能把空白当答案甩给用户（医疗场景最差结果）。重试一次，仍空则优雅兜底。
+        text = llm.invoke(messages).content.strip()
+    if not text:
+        text = "根据现有资料暂时无法生成回答，请重试或换一种问法。"
     # 确定性追加免责声明：医疗高风险强制合规，不依赖 LLM 自觉（CLI/Web/评测三面统一带上）
-    return {"answer": f"{msg.content.strip()}\n\n{DISCLAIMER}"}
+    return {"answer": f"{text}\n\n{DISCLAIMER}"}
 
 
 # ---------- 反思：自判证据是否充分（P4 反思回路）----------

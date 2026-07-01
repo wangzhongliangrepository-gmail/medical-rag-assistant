@@ -22,3 +22,7 @@ qdrant_db*/
 *_out.txt
 *_err.txt
 .idea/
+
+# 个人简历等私人文档 — 绝不进公开仓库
+*.docx
+~$*

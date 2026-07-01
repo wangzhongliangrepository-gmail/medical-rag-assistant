@@ -129,6 +129,7 @@ def _to_response(result: dict, req: ChatRequest) -> ChatResponse:
     )
 
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
